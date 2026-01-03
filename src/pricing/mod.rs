@@ -30,7 +30,7 @@ pub use rules::{
     DataTransferRules, LifecycleTransitionKey, OperationRules, OperationType, PricingRules,
     ProviderInfo, RetrievalTier, StorageClassRules,
 };
-pub use tiered::TieredPrice;
+pub use tiered::{PriceTier, TieredPrice};
 
 use std::path::Path;
 
