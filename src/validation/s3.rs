@@ -498,6 +498,16 @@ impl ValidationProvider for S3Validator {
     }
 }
 
+impl std::fmt::Debug for S3Validator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3Validator")
+            .field("bucket", &self.bucket)
+            .field("region", &self.region)
+            .field("default_storage_class", &self.default_storage_class)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Metrics from a single operation.
 #[derive(Debug, Default)]
 #[allow(dead_code)]

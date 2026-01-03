@@ -23,6 +23,7 @@ mod validation_harness;
 use cloud_billing_sim::pricing;
 use cloud_billing_sim::validation::b2::B2Validator;
 use cloud_billing_sim::validation::{ValidationProvider, ValidationWorkload};
+#[allow(unused_imports)]
 use validation_harness::{
     b2_env_configured, get_b2_bucket, mixed_workload, operations_workload, simple_workload,
     storage_workload,

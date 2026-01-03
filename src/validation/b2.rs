@@ -46,7 +46,6 @@ use tracing::{debug, info, warn};
 /// Backblaze B2 validation provider.
 ///
 /// Connects to B2 to execute real operations and compare costs.
-#[allow(dead_code)]
 pub struct B2Validator {
     /// HTTP client.
     client: Client,
@@ -619,6 +618,17 @@ impl ValidationProvider for B2Validator {
         let deleted = self.delete_created_files().await?;
         info!(deleted = %deleted, "cleanup complete");
         Ok(())
+    }
+}
+
+impl std::fmt::Debug for B2Validator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("B2Validator")
+            .field("api_url", &self.api_url)
+            .field("account_id", &self.account_id)
+            .field("bucket_name", &self.bucket_name)
+            .field("bucket_id", &self.bucket_id)
+            .finish_non_exhaustive()
     }
 }
 

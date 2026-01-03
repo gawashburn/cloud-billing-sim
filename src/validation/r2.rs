@@ -51,7 +51,6 @@ use tracing::{debug, info, warn};
 ///
 /// Connects to R2 using the S3-compatible API to execute real operations
 /// and compare costs. R2's key advantage is zero egress fees.
-#[allow(dead_code)]
 pub struct R2Validator {
     /// S3-compatible client configured for R2.
     client: S3Client,
@@ -527,6 +526,16 @@ impl ValidationProvider for R2Validator {
         let deleted = self.delete_created_objects().await?;
         info!(deleted = %deleted, "R2 cleanup complete");
         Ok(())
+    }
+}
+
+impl std::fmt::Debug for R2Validator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("R2Validator")
+            .field("account_id", &self.account_id)
+            .field("bucket", &self.bucket)
+            .field("default_storage_class", &self.default_storage_class)
+            .finish_non_exhaustive()
     }
 }
 
