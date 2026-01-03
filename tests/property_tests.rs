@@ -105,6 +105,45 @@ proptest! {
         // Ordering matches decimal ordering
         prop_assert_eq!(a.cmp(&b), a.as_decimal().cmp(&b.as_decimal()));
     }
+
+    /// Property: round_dp preserves value for values with fewer decimal places.
+    #[test]
+    fn money_round_dp_preserves_whole_dollars(dollars in 0u64..1_000_000u64) {
+        let m = Money::from_dollars(dollars, 0);
+        let rounded = m.round_dp(2);
+        prop_assert_eq!(rounded, m);
+    }
+
+    /// Property: round_dp correctly rounds to specified decimal places.
+    #[test]
+    fn money_round_dp_correct(dollars in 0u64..10000u64, cents in 0u32..100u32) {
+        let m = Money::from_dollars(dollars, cents);
+        let rounded = m.round_dp(2);
+        // Value should remain the same since we only have 2 decimal places
+        prop_assert_eq!(rounded, m);
+        // Rounding to 0 decimal places should give whole dollars
+        let rounded_0 = m.round_dp(0);
+        prop_assert!(rounded_0.as_decimal().fract().is_zero());
+    }
+
+    /// Property: Display format produces non-empty output.
+    #[test]
+    fn money_display_non_empty(m in money_strategy()) {
+        let display = format!("{m}");
+        prop_assert!(!display.is_empty());
+        prop_assert!(display.starts_with('$'));
+    }
+
+    /// Property: Display format contains the expected value.
+    #[test]
+    fn money_display_contains_value(dollars in 0u64..10000u64, cents in 0u32..100u32) {
+        let m = Money::from_dollars(dollars, cents);
+        let display = format!("{m}");
+        // Display should start with '$' and contain the dollar amount
+        prop_assert!(display.starts_with('$'));
+        // The integer part should be present
+        prop_assert!(display.contains(&dollars.to_string()));
+    }
 }
 
 // ============================================================================
@@ -178,6 +217,63 @@ proptest! {
         let max = a.max(b);
         prop_assert!(max >= a);
         prop_assert!(max >= b);
+    }
+
+    /// Property: max(a, b) returns exactly a or b.
+    #[test]
+    fn bytes_max_returns_correct_value(a in bytes_strategy(), b in bytes_strategy()) {
+        let max = a.max(b);
+        if a >= b {
+            prop_assert_eq!(max, a);
+        } else {
+            prop_assert_eq!(max, b);
+        }
+    }
+
+    /// Property: Bytes subtraction is correct.
+    #[test]
+    fn bytes_subtraction_correct(a in small_bytes_strategy(), b in small_bytes_strategy()) {
+        if a >= b {
+            let result = a - b;
+            prop_assert_eq!(result.as_bytes(), a.as_bytes() - b.as_bytes());
+        }
+    }
+
+    /// Property: Bytes SubAssign modifies value correctly.
+    #[test]
+    fn bytes_sub_assign_correct(a in small_bytes_strategy(), b in small_bytes_strategy()) {
+        if a >= b {
+            let mut result = a;
+            result -= b;
+            prop_assert_eq!(result.as_bytes(), a.as_bytes() - b.as_bytes());
+        }
+    }
+
+    /// Property: Bytes AddAssign modifies value correctly.
+    #[test]
+    fn bytes_add_assign_correct(a in small_bytes_strategy(), b in small_bytes_strategy()) {
+        let mut result = a;
+        result += b;
+        prop_assert_eq!(result, a + b);
+        prop_assert_eq!(result.as_bytes(), a.as_bytes() + b.as_bytes());
+    }
+
+    /// Property: as_tb_decimal returns correct value.
+    #[test]
+    fn bytes_as_tb_decimal_correct(tb in 0u64..100u64) {
+        let b = Bytes::from_tb(tb);
+        let tb_decimal = b.as_tb_decimal();
+        prop_assert_eq!(tb_decimal, Decimal::from(tb));
+    }
+
+    /// Property: as_tb_decimal is consistent with as_bytes.
+    #[test]
+    fn bytes_as_tb_decimal_consistent(bytes_val in 0u64..1_000_000_000_000_000u64) {
+        let b = Bytes::new(bytes_val);
+        let tb_decimal = b.as_tb_decimal();
+        // TB = bytes / (1024^4)
+        let expected = Decimal::from(bytes_val) / Decimal::from(1024u64 * 1024 * 1024 * 1024);
+        prop_assert_eq!(tb_decimal, expected);
     }
 }
 

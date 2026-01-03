@@ -95,6 +95,10 @@ impl Bytes {
     }
 
     /// Returns the maximum of this value and another.
+    // MUTANTS EXCLUSION: The mutation `> to >=` is an equivalent mutant.
+    // When self == other, returning either value gives the same result since
+    // both have identical byte counts. Tested by bytes_max_returns_correct_value.
+    #[mutants::skip]
     #[must_use]
     pub const fn max(self, other: Self) -> Self {
         if self.0 > other.0 {
