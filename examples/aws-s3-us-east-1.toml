@@ -1,0 +1,189 @@
+# AWS S3 Pricing Rules - US East (N. Virginia)
+# Based on https://aws.amazon.com/s3/pricing/ as of January 2024
+# Prices are in USD
+
+[provider]
+name = "aws-s3"
+region = "us-east-1"
+version = "2024-01"
+currency = "USD"
+
+# =============================================================================
+# Storage Classes
+# =============================================================================
+
+[storage_classes.STANDARD]
+# S3 Standard - frequently accessed data
+storage_price_per_gb_month = [
+    { up_to_gb = 51200, price = "0.023" },       # First 50 TB
+    { up_to_gb = 512000, price = "0.022" },      # Next 450 TB
+    { price = "0.021" }                           # Over 500 TB
+]
+
+[storage_classes.INTELLIGENT_TIERING]
+# S3 Intelligent-Tiering - automatic cost optimization
+storage_price_per_gb_month = "0.023"
+intelligent_tiering = true
+monitoring_price_per_1000_objects = "0.0025"
+
+[storage_classes.STANDARD_IA]
+# S3 Standard-Infrequent Access
+storage_price_per_gb_month = "0.0125"
+min_billable_size_bytes = 131072              # 128 KB minimum
+min_storage_duration_days = 30
+retrieval_price_per_gb = "0.01"
+
+[storage_classes.ONEZONE_IA]
+# S3 One Zone-Infrequent Access
+storage_price_per_gb_month = "0.01"
+min_billable_size_bytes = 131072              # 128 KB minimum
+min_storage_duration_days = 30
+retrieval_price_per_gb = "0.01"
+
+[storage_classes.GLACIER_INSTANT_RETRIEVAL]
+# S3 Glacier Instant Retrieval
+storage_price_per_gb_month = "0.004"
+min_billable_size_bytes = 131072              # 128 KB minimum
+min_storage_duration_days = 90
+retrieval_price_per_gb = "0.03"
+
+[storage_classes.GLACIER_FLEXIBLE_RETRIEVAL]
+# S3 Glacier Flexible Retrieval (formerly S3 Glacier)
+storage_price_per_gb_month = "0.0036"
+min_billable_size_bytes = 40960               # 40 KB minimum
+min_storage_duration_days = 90
+metadata_overhead_bytes = 40960               # 40 KB metadata overhead
+
+[[storage_classes.GLACIER_FLEXIBLE_RETRIEVAL.retrieval_tiers]]
+name = "expedited"
+price_per_gb = "0.03"
+price_per_1000_requests = "10.00"
+
+[[storage_classes.GLACIER_FLEXIBLE_RETRIEVAL.retrieval_tiers]]
+name = "standard"
+price_per_gb = "0.01"
+price_per_1000_requests = "0.05"
+
+[[storage_classes.GLACIER_FLEXIBLE_RETRIEVAL.retrieval_tiers]]
+name = "bulk"
+price_per_gb = "0.0025"
+price_per_1000_requests = "0.025"
+
+[storage_classes.GLACIER_DEEP_ARCHIVE]
+# S3 Glacier Deep Archive
+storage_price_per_gb_month = "0.00099"
+min_billable_size_bytes = 40960               # 40 KB minimum
+min_storage_duration_days = 180
+metadata_overhead_bytes = 40960               # 40 KB metadata overhead
+
+[[storage_classes.GLACIER_DEEP_ARCHIVE.retrieval_tiers]]
+name = "standard"
+price_per_gb = "0.02"
+price_per_1000_requests = "0.10"
+
+[[storage_classes.GLACIER_DEEP_ARCHIVE.retrieval_tiers]]
+name = "bulk"
+price_per_gb = "0.0025"
+price_per_1000_requests = "0.025"
+
+# =============================================================================
+# Operations Pricing
+# =============================================================================
+
+[operations.DEFAULT]
+# Default operation pricing (applies to STANDARD and similar)
+put_per_1000 = "0.005"
+get_per_1000 = "0.0004"
+list_per_1000 = "0.005"
+delete_per_1000 = "0"
+head_per_1000 = "0.0004"
+lifecycle_transition_per_1000 = "0.01"
+
+[operations.STANDARD_IA]
+# Standard-IA has different GET pricing
+put_per_1000 = "0.01"
+get_per_1000 = "0.001"
+list_per_1000 = "0.01"
+delete_per_1000 = "0"
+head_per_1000 = "0.001"
+lifecycle_transition_per_1000 = "0.01"
+
+[operations.ONEZONE_IA]
+put_per_1000 = "0.01"
+get_per_1000 = "0.001"
+list_per_1000 = "0.01"
+delete_per_1000 = "0"
+head_per_1000 = "0.001"
+lifecycle_transition_per_1000 = "0.01"
+
+[operations.GLACIER_INSTANT_RETRIEVAL]
+put_per_1000 = "0.02"
+get_per_1000 = "0.01"
+list_per_1000 = "0.02"
+delete_per_1000 = "0"
+head_per_1000 = "0.01"
+lifecycle_transition_per_1000 = "0.02"
+
+[operations.GLACIER_FLEXIBLE_RETRIEVAL]
+put_per_1000 = "0.03"
+get_per_1000 = "0.0004"
+list_per_1000 = "0.03"
+delete_per_1000 = "0"
+head_per_1000 = "0.0004"
+lifecycle_transition_per_1000 = "0.03"
+
+[operations.GLACIER_DEEP_ARCHIVE]
+put_per_1000 = "0.05"
+get_per_1000 = "0.0004"
+list_per_1000 = "0.05"
+delete_per_1000 = "0"
+head_per_1000 = "0.0004"
+lifecycle_transition_per_1000 = "0.05"
+
+# =============================================================================
+# Data Transfer
+# =============================================================================
+
+[data_transfer]
+# Data transfer IN (ingress) is free
+ingress_price_per_gb = "0"
+
+# Data transfer OUT (egress) to internet
+egress_price_per_gb = [
+    { up_to_gb = 10240, price = "0.09" },       # First 10 TB
+    { up_to_gb = 51200, price = "0.085" },      # Next 40 TB
+    { up_to_gb = 153600, price = "0.07" },      # Next 100 TB
+    { price = "0.05" }                           # Over 150 TB
+]
+
+# First 100 GB per month is free (AWS Free Tier for first 12 months)
+# Uncomment if applicable:
+# free_egress_gb_per_month = 100
+
+# =============================================================================
+# Lifecycle Transitions
+# =============================================================================
+
+[lifecycle_transitions.STANDARD_to_STANDARD_IA]
+per_1000_requests = "0.01"
+
+[lifecycle_transitions.STANDARD_to_ONEZONE_IA]
+per_1000_requests = "0.01"
+
+[lifecycle_transitions.STANDARD_to_INTELLIGENT_TIERING]
+per_1000_requests = "0.01"
+
+[lifecycle_transitions.STANDARD_to_GLACIER_INSTANT_RETRIEVAL]
+per_1000_requests = "0.02"
+
+[lifecycle_transitions.STANDARD_to_GLACIER_FLEXIBLE_RETRIEVAL]
+per_1000_requests = "0.03"
+
+[lifecycle_transitions.STANDARD_to_GLACIER_DEEP_ARCHIVE]
+per_1000_requests = "0.05"
+
+[lifecycle_transitions.STANDARD_IA_to_GLACIER_FLEXIBLE_RETRIEVAL]
+per_1000_requests = "0.03"
+
+[lifecycle_transitions.STANDARD_IA_to_GLACIER_DEEP_ARCHIVE]
+per_1000_requests = "0.05"

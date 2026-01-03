@@ -1,0 +1,50 @@
+# Backblaze B2 Cloud Storage Pricing Rules
+# Based on https://www.backblaze.com/cloud-storage/pricing as of January 2024
+# Demonstrates provider extensibility - simpler pricing than AWS S3
+
+[provider]
+name = "backblaze-b2"
+version = "2024-01"
+currency = "USD"
+
+# =============================================================================
+# Storage Classes
+# =============================================================================
+
+# B2 has a single storage class with flat pricing
+[storage_classes.STANDARD]
+# $6/TB/month = $0.006/GB/month
+storage_price_per_gb_month = "0.006"
+# No minimum object size
+# No minimum storage duration
+
+# =============================================================================
+# Operations Pricing
+# =============================================================================
+
+[operations.DEFAULT]
+# Class A transactions (uploads, list files) - FREE
+put_per_1000 = "0"
+list_per_1000 = "0"
+
+# Class B transactions (downloads) - $0.004 per 10,000
+# = $0.0004 per 1000
+get_per_1000 = "0.0004"
+
+# Class C transactions (other) - $0.004 per 1,000
+head_per_1000 = "0.004"
+delete_per_1000 = "0"
+
+# =============================================================================
+# Data Transfer
+# =============================================================================
+
+[data_transfer]
+# Upload (ingress) is FREE
+ingress_price_per_gb = "0"
+
+# Download (egress) pricing:
+# - Free: 3x your average monthly storage
+# - Paid: $0.01/GB after free allowance
+egress_price_per_gb = "0.01"
+free_egress_storage_multiplier = "3"

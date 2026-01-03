@@ -1,0 +1,51 @@
+{
+  "metadata": {
+    "description": "Sample workload for Backblaze B2",
+    "source": "cloud-billing-sim example"
+  },
+  "operations": [
+    {
+      "timestamp": "2024-01-01T00:00:00Z",
+      "operation": "put_object",
+      "bucket": "my-b2-bucket",
+      "key": "backups/backup-2024-01.tar.gz",
+      "size_bytes": 10737418240,
+      "storage_class": "STANDARD"
+    },
+    {
+      "timestamp": "2024-01-15T00:00:00Z",
+      "operation": "put_object",
+      "bucket": "my-b2-bucket",
+      "key": "backups/backup-2024-01-15.tar.gz",
+      "size_bytes": 10737418240,
+      "storage_class": "STANDARD"
+    },
+    {
+      "timestamp": "2024-02-01T00:00:00Z",
+      "operation": "put_object",
+      "bucket": "my-b2-bucket",
+      "key": "backups/backup-2024-02.tar.gz",
+      "size_bytes": 10737418240,
+      "storage_class": "STANDARD"
+    },
+    {
+      "timestamp": "2024-02-15T10:00:00Z",
+      "operation": "get_object",
+      "bucket": "my-b2-bucket",
+      "key": "backups/backup-2024-01.tar.gz",
+      "bytes_transferred": 10737418240
+    },
+    {
+      "timestamp": "2024-03-01T00:00:00Z",
+      "operation": "delete_object",
+      "bucket": "my-b2-bucket",
+      "key": "backups/backup-2024-01.tar.gz"
+    },
+    {
+      "timestamp": "2024-03-01T00:00:00Z",
+      "operation": "delete_object",
+      "bucket": "my-b2-bucket",
+      "key": "backups/backup-2024-01-15.tar.gz"
+    }
+  ]
+}

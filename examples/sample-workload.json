@@ -1,0 +1,108 @@
+{
+  "metadata": {
+    "description": "Sample workload demonstrating various S3 operations",
+    "source": "cloud-billing-sim example"
+  },
+  "operations": [
+    {
+      "timestamp": "2024-01-01T00:00:00Z",
+      "operation": "put_object",
+      "bucket": "my-data-bucket",
+      "key": "documents/report-2024.pdf",
+      "size_bytes": 5242880,
+      "storage_class": "STANDARD"
+    },
+    {
+      "timestamp": "2024-01-01T00:01:00Z",
+      "operation": "put_object",
+      "bucket": "my-data-bucket",
+      "key": "images/photo1.jpg",
+      "size_bytes": 2097152,
+      "storage_class": "STANDARD"
+    },
+    {
+      "timestamp": "2024-01-01T00:02:00Z",
+      "operation": "put_object",
+      "bucket": "my-data-bucket",
+      "key": "images/photo2.jpg",
+      "size_bytes": 3145728,
+      "storage_class": "STANDARD"
+    },
+    {
+      "timestamp": "2024-01-05T10:00:00Z",
+      "operation": "get_object",
+      "bucket": "my-data-bucket",
+      "key": "documents/report-2024.pdf",
+      "bytes_transferred": 5242880
+    },
+    {
+      "timestamp": "2024-01-10T14:30:00Z",
+      "operation": "list_objects",
+      "bucket": "my-data-bucket",
+      "objects_returned": 3
+    },
+    {
+      "timestamp": "2024-01-15T09:00:00Z",
+      "operation": "copy_object",
+      "bucket": "my-data-bucket",
+      "key": "backup/report-2024.pdf",
+      "source_key": "documents/report-2024.pdf"
+    },
+    {
+      "timestamp": "2024-01-20T16:00:00Z",
+      "operation": "get_object",
+      "bucket": "my-data-bucket",
+      "key": "images/photo1.jpg",
+      "bytes_transferred": 2097152
+    },
+    {
+      "timestamp": "2024-01-20T16:01:00Z",
+      "operation": "get_object",
+      "bucket": "my-data-bucket",
+      "key": "images/photo2.jpg",
+      "bytes_transferred": 3145728
+    },
+    {
+      "timestamp": "2024-02-01T00:00:00Z",
+      "operation": "lifecycle_transition",
+      "bucket": "my-data-bucket",
+      "key": "documents/report-2024.pdf",
+      "new_storage_class": "STANDARD_IA"
+    },
+    {
+      "timestamp": "2024-02-15T12:00:00Z",
+      "operation": "get_object",
+      "bucket": "my-data-bucket",
+      "key": "documents/report-2024.pdf",
+      "bytes_transferred": 5242880
+    },
+    {
+      "timestamp": "2024-03-01T00:00:00Z",
+      "operation": "delete_object",
+      "bucket": "my-data-bucket",
+      "key": "images/photo1.jpg"
+    },
+    {
+      "timestamp": "2024-03-15T00:00:00Z",
+      "operation": "put_object",
+      "bucket": "my-archive-bucket",
+      "key": "archive/old-data.tar.gz",
+      "size_bytes": 1073741824,
+      "storage_class": "GLACIER_FLEXIBLE_RETRIEVAL"
+    },
+    {
+      "timestamp": "2024-04-01T00:00:00Z",
+      "operation": "head_object",
+      "bucket": "my-data-bucket",
+      "key": "documents/report-2024.pdf"
+    },
+    {
+      "timestamp": "2024-06-01T00:00:00Z",
+      "operation": "restore_object",
+      "bucket": "my-archive-bucket",
+      "key": "archive/old-data.tar.gz",
+      "days": 7,
+      "tier": "standard"
+    }
+  ]
+}
