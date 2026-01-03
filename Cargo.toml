@@ -10,6 +10,11 @@ repository = "https://github.com/geoffw/cloud-billing-sim"
 keywords = ["cloud", "s3", "billing", "simulator"]
 categories = ["command-line-utilities", "simulation"]
 
+[features]
+default = []
+s3-validation = ["dep:aws-sdk-s3", "dep:aws-sdk-pricing", "dep:aws-config", "dep:tokio"]
+b2-validation = ["dep:reqwest", "dep:tokio"]
+
 [dependencies]
 thiserror = "1"
 serde = { version = "1", features = ["derive"] }
@@ -21,6 +26,13 @@ clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 mutants = "0.0.3"
+
+# Optional dependencies for cloud validation
+aws-sdk-s3 = { version = "1", optional = true }
+aws-sdk-pricing = { version = "1", optional = true }
+aws-config = { version = "1", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
+reqwest = { version = "0.12", features = ["json"], optional = true }
 
 [dev-dependencies]
 proptest = "1"
