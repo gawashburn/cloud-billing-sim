@@ -179,7 +179,10 @@ mod verification {
         let cost = tiered.calculate_cost(Decimal::from(gb));
         let expected = price * Decimal::from(gb);
 
-        assert!(cost == expected, "Flat price cost must equal price * quantity");
+        assert!(
+            cost == expected,
+            "Flat price cost must equal price * quantity"
+        );
     }
 
     /// Verifies that cost is non-negative for flat pricing

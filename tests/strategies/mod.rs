@@ -1,7 +1,7 @@
 //! Proptest strategies for cloud billing simulator types.
 
-mod money;
 mod bytes;
+mod money;
 mod pricing;
 
 pub use bytes::*;

@@ -178,7 +178,10 @@ mod verification {
         let a: Money = kani::any();
 
         assert!(a + Money::ZERO == a, "Zero must be additive identity");
-        assert!(Money::ZERO + a == a, "Zero must be additive identity (left)");
+        assert!(
+            Money::ZERO + a == a,
+            "Zero must be additive identity (left)"
+        );
     }
 
     /// Verifies that Money::ZERO.is_zero() returns true
@@ -193,10 +196,7 @@ mod verification {
     fn verify_multiply_by_zero() {
         let a: Money = kani::any();
 
-        assert!(
-            (a * 0u64).is_zero(),
-            "Multiplying by zero must yield zero"
-        );
+        assert!((a * 0u64).is_zero(), "Multiplying by zero must yield zero");
     }
 
     /// Verifies that multiplying by one doesn't change the value

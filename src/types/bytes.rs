@@ -209,7 +209,10 @@ mod verification {
         let a: Bytes = kani::any();
 
         assert!(a + Bytes::ZERO == a, "Zero must be additive identity");
-        assert!(Bytes::ZERO + a == a, "Zero must be additive identity (left)");
+        assert!(
+            Bytes::ZERO + a == a,
+            "Zero must be additive identity (left)"
+        );
     }
 
     /// Verifies that Bytes::ZERO.is_zero() returns true

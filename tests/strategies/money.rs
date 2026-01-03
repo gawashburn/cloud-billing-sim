@@ -16,8 +16,7 @@ pub fn money_strategy() -> impl Strategy<Value = Money> {
 
 /// Strategy for small money values (for precise testing).
 pub fn small_money_strategy() -> impl Strategy<Value = Money> {
-    (0u64..10000u64, 0u32..100u32)
-        .prop_map(|(dollars, cents)| Money::from_dollars(dollars, cents))
+    (0u64..10000u64, 0u32..100u32).prop_map(|(dollars, cents)| Money::from_dollars(dollars, cents))
 }
 
 /// Strategy for generating non-zero Money values.

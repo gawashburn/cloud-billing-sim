@@ -7,7 +7,7 @@ use cloud_billing_sim::types::Money;
 use proptest::prelude::*;
 use std::str::FromStr;
 
-/// Strategy for generating flat TieredPrice values.
+/// Strategy for generating flat `TieredPrice` values.
 pub fn flat_price_strategy() -> impl Strategy<Value = TieredPrice> {
     // Price per GB from $0.001 to $1.00
     (1u32..1000u32).prop_map(|millicents| {
@@ -21,7 +21,7 @@ pub fn flat_price_strategy() -> impl Strategy<Value = TieredPrice> {
 pub fn price_tier_strategy() -> impl Strategy<Value = PriceTier> {
     (
         prop::option::of(1u64..1_000_000u64), // up_to_gb
-        1u32..1000u32,                         // price in millicents
+        1u32..1000u32,                        // price in millicents
     )
         .prop_map(|(up_to_gb, millicents)| {
             let price_str = format!("0.{millicents:03}");
@@ -37,37 +37,36 @@ pub fn price_tier_strategy() -> impl Strategy<Value = PriceTier> {
 pub fn tiered_price_strategy() -> impl Strategy<Value = TieredPrice> {
     (2usize..=4usize).prop_flat_map(|num_tiers| {
         // Generate sorted thresholds and decreasing prices
-        prop::collection::vec(1u64..100_000u64, num_tiers)
-            .prop_flat_map(move |mut thresholds| {
-                thresholds.sort();
-                // Make last tier unlimited
-                let thresholds: Vec<Option<u64>> = thresholds
-                    .into_iter()
-                    .take(num_tiers - 1)
-                    .map(Some)
-                    .chain(std::iter::once(None))
+        prop::collection::vec(1u64..100_000u64, num_tiers).prop_flat_map(move |mut thresholds| {
+            thresholds.sort_unstable();
+            // Make last tier unlimited
+            let thresholds: Vec<Option<u64>> = thresholds
+                .into_iter()
+                .take(num_tiers - 1)
+                .map(Some)
+                .chain(std::iter::once(None))
+                .collect();
+
+            // Generate decreasing prices
+            prop::collection::vec(1u32..1000u32, num_tiers).prop_map(move |mut prices| {
+                prices.sort_unstable();
+                prices.reverse(); // Higher price for lower tiers
+
+                let tiers: Vec<PriceTier> = thresholds
+                    .iter()
+                    .zip(prices.iter())
+                    .map(|(&up_to_gb, &millicents)| {
+                        let price_str = format!("0.{millicents:03}");
+                        PriceTier {
+                            up_to_gb,
+                            price: Money::from_str(&price_str).unwrap_or(Money::ZERO),
+                        }
+                    })
                     .collect();
 
-                // Generate decreasing prices
-                prop::collection::vec(1u32..1000u32, num_tiers).prop_map(move |mut prices| {
-                    prices.sort();
-                    prices.reverse(); // Higher price for lower tiers
-
-                    let tiers: Vec<PriceTier> = thresholds
-                        .iter()
-                        .zip(prices.iter())
-                        .map(|(&up_to_gb, &millicents)| {
-                            let price_str = format!("0.{millicents:03}");
-                            PriceTier {
-                                up_to_gb,
-                                price: Money::from_str(&price_str).unwrap_or(Money::ZERO),
-                            }
-                        })
-                        .collect();
-
-                    TieredPrice::tiered(tiers)
-                })
+                TieredPrice::tiered(tiers)
             })
+        })
     })
 }
 
