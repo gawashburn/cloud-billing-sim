@@ -14,6 +14,7 @@ categories = ["command-line-utilities", "simulation"]
 default = []
 s3-validation = ["dep:aws-sdk-s3", "dep:aws-sdk-pricing", "dep:aws-config", "dep:tokio"]
 b2-validation = ["dep:reqwest", "dep:tokio"]
+r2-validation = ["dep:aws-sdk-s3", "dep:aws-config", "dep:tokio"]
 
 [dependencies]
 thiserror = "1"

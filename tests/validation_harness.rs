@@ -1,7 +1,7 @@
 //! Integration test harness for cloud provider validation.
 //!
 //! This module provides utilities for running validation tests against
-//! real cloud providers (S3, B2).
+//! real cloud providers (S3, B2, R2).
 //!
 //! # Running Tests
 //!
@@ -14,6 +14,9 @@
 //!
 //! # B2 validation tests
 //! cargo test --features b2-validation validation_b2 -- --ignored
+//!
+//! # R2 validation tests
+//! cargo test --features r2-validation validation_r2 -- --ignored
 //! ```
 //!
 //! # Environment Variables
@@ -27,6 +30,12 @@
 //! - `B2_APPLICATION_KEY_ID`: B2 key ID
 //! - `B2_APPLICATION_KEY`: B2 application key
 //! - `TEST_B2_BUCKET`: B2 bucket name
+//!
+//! For R2:
+//! - `R2_ACCOUNT_ID`: Cloudflare account ID
+//! - `R2_ACCESS_KEY_ID`: R2 access key ID
+//! - `R2_SECRET_ACCESS_KEY`: R2 secret access key
+//! - `TEST_R2_BUCKET`: R2 bucket name
 
 #![allow(dead_code)]
 
@@ -260,6 +269,19 @@ pub fn get_s3_region() -> String {
 /// Gets the test B2 bucket name.
 pub fn get_b2_bucket() -> Option<String> {
     std::env::var("TEST_B2_BUCKET").ok()
+}
+
+/// Checks if R2 validation environment is configured.
+pub fn r2_env_configured() -> bool {
+    std::env::var("R2_ACCOUNT_ID").is_ok()
+        && std::env::var("R2_ACCESS_KEY_ID").is_ok()
+        && std::env::var("R2_SECRET_ACCESS_KEY").is_ok()
+        && std::env::var("TEST_R2_BUCKET").is_ok()
+}
+
+/// Gets the test R2 bucket name.
+pub fn get_r2_bucket() -> Option<String> {
+    std::env::var("TEST_R2_BUCKET").ok()
 }
 
 #[cfg(test)]

@@ -6,13 +6,13 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum ValidationError {
     /// AWS SDK configuration error.
-    #[cfg(feature = "s3-validation")]
+    #[cfg(any(feature = "s3-validation", feature = "r2-validation"))]
     #[error("AWS configuration error: {0}")]
     AwsConfig(String),
 
-    /// S3 operation failed.
-    #[cfg(feature = "s3-validation")]
-    #[error("S3 operation failed: {0}")]
+    /// S3-compatible operation failed (used by S3 and R2).
+    #[cfg(any(feature = "s3-validation", feature = "r2-validation"))]
+    #[error("S3-compatible operation failed: {0}")]
     S3Operation(String),
 
     /// B2 authentication error.

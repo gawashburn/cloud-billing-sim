@@ -7,6 +7,7 @@
 //!
 //! - `s3-validation`: Enables AWS S3 validation support
 //! - `b2-validation`: Enables Backblaze B2 validation support
+//! - `r2-validation`: Enables Cloudflare R2 validation support
 //!
 //! # Architecture
 //!
@@ -41,6 +42,9 @@ pub mod s3;
 
 #[cfg(feature = "b2-validation")]
 pub mod b2;
+
+#[cfg(feature = "r2-validation")]
+pub mod r2;
 
 pub use error::ValidationError;
 pub use traits::{

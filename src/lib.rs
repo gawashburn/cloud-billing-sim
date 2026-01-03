@@ -76,7 +76,7 @@ pub mod operations;
 pub mod pricing;
 pub mod types;
 
-#[cfg(any(feature = "s3-validation", feature = "b2-validation"))]
+#[cfg(any(feature = "s3-validation", feature = "b2-validation", feature = "r2-validation"))]
 pub mod validation;
 
 // Re-export commonly used types
