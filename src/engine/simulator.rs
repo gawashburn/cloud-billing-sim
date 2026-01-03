@@ -308,7 +308,7 @@ impl Simulator {
 
         // Retrieval cost for archive classes
         if let Some(class_rules) = self.rules.get_storage_class(&obj.storage_class) {
-            let tier_name = retrieval_tier.map(crate::operations::RetrievalSpeed::as_str);
+            let tier_name = retrieval_tier.map(|t| t.as_str());
             let retrieval_cost_per_gb = class_rules.get_retrieval_cost(tier_name);
 
             if !retrieval_cost_per_gb.is_zero() {
@@ -327,7 +327,8 @@ impl Simulator {
             .state
             .total_storage_by_class()
             .values()
-            .map(crate::Bytes::as_gb_decimal)
+            .copied()
+            .map(Bytes::as_gb_decimal)
             .sum();
 
         let egress_cost = self
@@ -619,7 +620,7 @@ impl Simulator {
 
         // Retrieval cost
         if let Some(class_rules) = self.rules.get_storage_class(&obj.storage_class) {
-            let tier_name = tier.map(crate::operations::RetrievalSpeed::as_str);
+            let tier_name = tier.map(|t| t.as_str());
             let cost_per_gb = class_rules.get_retrieval_cost(tier_name);
             let retrieval_cost = cost_per_gb * obj.size.as_gb_decimal();
 

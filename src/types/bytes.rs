@@ -69,7 +69,7 @@ impl Bytes {
 
     /// Returns the raw byte count.
     #[must_use]
-    pub const fn as_bytes(&self) -> u64 {
+    pub const fn as_bytes(self) -> u64 {
         self.0
     }
 
@@ -78,19 +78,19 @@ impl Bytes {
     /// Cloud providers typically price storage per GB-month, so this
     /// provides precise fractional GB values.
     #[must_use]
-    pub fn as_gb_decimal(&self) -> Decimal {
+    pub fn as_gb_decimal(self) -> Decimal {
         Decimal::from(self.0) / Decimal::from(Self::GB)
     }
 
     /// Returns the size in terabytes as a decimal.
     #[must_use]
-    pub fn as_tb_decimal(&self) -> Decimal {
+    pub fn as_tb_decimal(self) -> Decimal {
         Decimal::from(self.0) / Decimal::from(Self::TB)
     }
 
     /// Returns true if this is zero bytes.
     #[must_use]
-    pub const fn is_zero(&self) -> bool {
+    pub const fn is_zero(self) -> bool {
         self.0 == 0
     }
 

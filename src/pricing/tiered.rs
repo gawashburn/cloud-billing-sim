@@ -144,6 +144,7 @@ impl Default for TieredPrice {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_statements, clippy::expect_used)]
 mod tests {
     use super::*;
 

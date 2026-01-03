@@ -209,6 +209,8 @@ pub struct RetrievalTier {
 }
 
 /// Operation pricing for a storage class.
+// The `_per_1000` suffix is intentional - these are pricing rates per 1000 requests.
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OperationRules {
     /// PUT, COPY, POST request price per 1000 requests.
