@@ -31,6 +31,8 @@ harness = false
 
 [lints.rust]
 unsafe_code = "forbid"
+# Allow kani cfg for formal verification
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 [lints.clippy]
 all = "warn"
