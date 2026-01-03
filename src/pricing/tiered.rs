@@ -3,6 +3,7 @@
 use crate::types::Money;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer, Serialize};
+use std::str::FromStr;
 
 /// A price tier with an optional upper bound.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +36,7 @@ where
 /// use cloud_billing_sim::pricing::TieredPrice;
 /// use cloud_billing_sim::types::Money;
 /// use rust_decimal::Decimal;
+/// use std::str::FromStr;
 ///
 /// let flat = TieredPrice::flat(Money::from_str("0.023").unwrap());
 /// let cost = flat.calculate_cost(Decimal::from(1000)); // 1000 GB
@@ -66,7 +68,7 @@ impl TieredPrice {
 
     /// Creates a tiered price from a list of tiers.
     #[must_use]
-    pub fn tiered(tiers: Vec<PriceTier>) -> Self {
+    pub const fn tiered(tiers: Vec<PriceTier>) -> Self {
         Self::Tiered(tiers)
     }
 
@@ -88,7 +90,7 @@ impl TieredPrice {
                         break;
                     }
 
-                    let tier_limit = tier.up_to_gb.map(Decimal::from).unwrap_or(Decimal::MAX);
+                    let tier_limit = tier.up_to_gb.map_or(Decimal::MAX, Decimal::from);
                     let tier_size = tier_limit - prev_threshold;
                     let usage_in_tier = remaining.min(tier_size);
 
@@ -130,7 +132,7 @@ impl<'de> Deserialize<'de> for TieredPrice {
             RawTieredPrice::Flat(s) => Money::from_str(&s)
                 .map(TieredPrice::Flat)
                 .map_err(D::Error::custom),
-            RawTieredPrice::Tiered(tiers) => Ok(TieredPrice::Tiered(tiers)),
+            RawTieredPrice::Tiered(tiers) => Ok(Self::Tiered(tiers)),
         }
     }
 }

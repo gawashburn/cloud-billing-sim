@@ -134,9 +134,9 @@ fn run_simulation(
                 objects.sort_by(|a, b| b.1.total.cmp(&a.1.total));
 
                 for (path, costs) in objects {
-                    println!("  {}: {}", path, costs.total);
+                    println!("  {path}: {}", costs.total);
                     for (category, cost) in &costs.by_category {
-                        println!("    {}: {}", category, cost);
+                        println!("    {category}: {cost}");
                     }
                 }
             }
@@ -247,7 +247,7 @@ fn validate_operations(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>>
     println!("  Operations: {}", ops.operations.len());
 
     if let Some((start, end)) = ops.time_range() {
-        println!("  Time range: {} to {}", start, end);
+        println!("  Time range: {start} to {end}");
     }
 
     // Count by type

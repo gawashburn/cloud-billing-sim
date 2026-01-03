@@ -108,7 +108,6 @@ pub struct MultipartUploadState {
     pub bucket: String,
     pub key: String,
     pub storage_class: StorageClass,
-    pub started_at: DateTime<Utc>,
     pub parts: HashMap<u32, PartState>,
 }
 
@@ -116,7 +115,6 @@ pub struct MultipartUploadState {
 #[derive(Debug, Clone)]
 pub struct PartState {
     pub size: Bytes,
-    pub uploaded_at: DateTime<Utc>,
 }
 
 impl StorageState {
@@ -190,7 +188,7 @@ impl StorageState {
         bucket: String,
         key: String,
         storage_class: StorageClass,
-        timestamp: DateTime<Utc>,
+        _timestamp: DateTime<Utc>,
     ) {
         self.multipart_uploads.insert(
             upload_id,
@@ -198,7 +196,6 @@ impl StorageState {
                 bucket,
                 key,
                 storage_class,
-                started_at: timestamp,
                 parts: HashMap::new(),
             },
         );
@@ -210,16 +207,10 @@ impl StorageState {
         upload_id: &str,
         part_number: u32,
         size: Bytes,
-        timestamp: DateTime<Utc>,
+        _timestamp: DateTime<Utc>,
     ) -> bool {
         if let Some(upload) = self.multipart_uploads.get_mut(upload_id) {
-            upload.parts.insert(
-                part_number,
-                PartState {
-                    size,
-                    uploaded_at: timestamp,
-                },
-            );
+            upload.parts.insert(part_number, PartState { size });
             true
         } else {
             false

@@ -18,7 +18,7 @@ pub struct OperationLog {
 impl OperationLog {
     /// Creates a new empty operation log.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             operations: Vec::new(),
             metadata: None,
@@ -83,10 +83,10 @@ impl Operation {
     /// Returns a display name for the object.
     #[must_use]
     pub fn object_path(&self) -> String {
-        match &self.key {
-            Some(key) => format!("{}/{}", self.bucket, key),
-            None => self.bucket.clone(),
-        }
+        self.key.as_ref().map_or_else(
+            || self.bucket.clone(),
+            |key| format!("{}/{}", self.bucket, key),
+        )
     }
 }
 
@@ -239,7 +239,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_put_object() {
+    fn parse_put_object() -> Result<(), serde_json::Error> {
         let json = r#"{
             "timestamp": "2024-01-15T10:30:00Z",
             "operation": "put_object",
@@ -249,13 +249,14 @@ mod tests {
             "storage_class": "STANDARD"
         }"#;
 
-        let op: Operation = serde_json::from_str(json).expect("should parse");
+        let op: Operation = serde_json::from_str(json)?;
         assert_eq!(op.bucket, "my-bucket");
         assert!(matches!(op.kind, OperationKind::PutObject { .. }));
+        Ok(())
     }
 
     #[test]
-    fn parse_get_object() {
+    fn parse_get_object() -> Result<(), serde_json::Error> {
         let json = r#"{
             "timestamp": "2024-01-15T11:00:00Z",
             "operation": "get_object",
@@ -264,18 +265,19 @@ mod tests {
             "bytes_transferred": 1048576
         }"#;
 
-        let op: Operation = serde_json::from_str(json).expect("should parse");
+        let op: Operation = serde_json::from_str(json)?;
         assert!(matches!(
             op.kind,
             OperationKind::GetObject {
-                bytes_transferred: Some(1048576),
+                bytes_transferred: Some(1_048_576),
                 ..
             }
         ));
+        Ok(())
     }
 
     #[test]
-    fn parse_operation_log() {
+    fn parse_operation_log() -> Result<(), serde_json::Error> {
         let json = r#"{
             "operations": [
                 {
@@ -294,7 +296,8 @@ mod tests {
             ]
         }"#;
 
-        let log: OperationLog = serde_json::from_str(json).expect("should parse");
+        let log: OperationLog = serde_json::from_str(json)?;
         assert_eq!(log.operations.len(), 2);
+        Ok(())
     }
 }

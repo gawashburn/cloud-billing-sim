@@ -215,7 +215,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles PutObject operation.
+    /// Handles `PutObject` operation.
     fn handle_put_object(
         &mut self,
         op: &Operation,
@@ -275,7 +275,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles GetObject operation.
+    /// Handles `GetObject` operation.
     fn handle_get_object(
         &mut self,
         op: &Operation,
@@ -308,7 +308,7 @@ impl Simulator {
 
         // Retrieval cost for archive classes
         if let Some(class_rules) = self.rules.get_storage_class(&obj.storage_class) {
-            let tier_name = retrieval_tier.map(|t| t.as_str());
+            let tier_name = retrieval_tier.map(crate::operations::RetrievalSpeed::as_str);
             let retrieval_cost_per_gb = class_rules.get_retrieval_cost(tier_name);
 
             if !retrieval_cost_per_gb.is_zero() {
@@ -327,7 +327,7 @@ impl Simulator {
             .state
             .total_storage_by_class()
             .values()
-            .map(|b| b.as_gb_decimal())
+            .map(crate::Bytes::as_gb_decimal)
             .sum();
 
         let egress_cost = self
@@ -351,7 +351,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles DeleteObject operation.
+    /// Handles `DeleteObject` operation.
     fn handle_delete_object(&mut self, op: &Operation) -> Result<(), EngineError> {
         let key = op
             .key
@@ -398,7 +398,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles CopyObject operation.
+    /// Handles `CopyObject` operation.
     fn handle_copy_object(
         &mut self,
         op: &Operation,
@@ -446,7 +446,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles ListObjects operation.
+    /// Handles `ListObjects` operation.
     fn handle_list_objects(
         &mut self,
         op: &Operation,
@@ -463,7 +463,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles HeadObject operation.
+    /// Handles `HeadObject` operation.
     fn handle_head_object(&mut self, op: &Operation) -> Result<(), EngineError> {
         let key = op
             .key
@@ -487,7 +487,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles CreateMultipartUpload.
+    /// Handles `CreateMultipartUpload`.
     fn handle_create_multipart_upload(
         &mut self,
         op: &Operation,
@@ -515,7 +515,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles UploadPart.
+    /// Handles `UploadPart`.
     fn handle_upload_part(
         &mut self,
         op: &Operation,
@@ -530,8 +530,7 @@ impl Simulator {
             .add_part(upload_id, part_number, Bytes::new(size_bytes), op.timestamp)
         {
             return Err(EngineError::InvalidSequence(format!(
-                "Unknown multipart upload: {}",
-                upload_id
+                "Unknown multipart upload: {upload_id}"
             )));
         }
 
@@ -545,7 +544,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles CompleteMultipartUpload.
+    /// Handles `CompleteMultipartUpload`.
     fn handle_complete_multipart_upload(
         &mut self,
         op: &Operation,
@@ -558,7 +557,7 @@ impl Simulator {
             .state
             .complete_multipart_upload(upload_id, op.timestamp)
             .ok_or_else(|| {
-                EngineError::InvalidSequence(format!("Unknown multipart upload: {}", upload_id))
+                EngineError::InvalidSequence(format!("Unknown multipart upload: {upload_id}"))
             })?;
 
         self.report
@@ -579,7 +578,8 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles AbortMultipartUpload.
+    /// Handles `AbortMultipartUpload`.
+    #[allow(clippy::unnecessary_wraps)] // Consistent with other handlers
     fn handle_abort_multipart_upload(
         &mut self,
         _op: &Operation,
@@ -596,7 +596,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles RestoreObject (for Glacier).
+    /// Handles `RestoreObject` (for Glacier).
     fn handle_restore_object(
         &mut self,
         op: &Operation,
@@ -619,7 +619,7 @@ impl Simulator {
 
         // Retrieval cost
         if let Some(class_rules) = self.rules.get_storage_class(&obj.storage_class) {
-            let tier_name = tier.map(|t| t.as_str());
+            let tier_name = tier.map(crate::operations::RetrievalSpeed::as_str);
             let cost_per_gb = class_rules.get_retrieval_cost(tier_name);
             let retrieval_cost = cost_per_gb * obj.size.as_gb_decimal();
 
@@ -648,7 +648,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles LifecycleTransition.
+    /// Handles `LifecycleTransition`.
     fn handle_lifecycle_transition(
         &mut self,
         op: &Operation,
@@ -687,7 +687,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles SelectObjectContent.
+    /// Handles `SelectObjectContent`.
     fn handle_select_object_content(
         &mut self,
         op: &Operation,
@@ -742,13 +742,13 @@ impl Simulator {
 
     /// Returns the current cost report.
     #[must_use]
-    pub fn report(&self) -> &CostReport {
+    pub const fn report(&self) -> &CostReport {
         &self.report
     }
 
     /// Returns the current storage state.
     #[must_use]
-    pub fn state(&self) -> &StorageState {
+    pub const fn state(&self) -> &StorageState {
         &self.state
     }
 
@@ -769,8 +769,9 @@ fn duration_to_month_fraction(duration: Duration) -> Decimal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pricing::{OperationRules, StorageClassRules, TieredPrice};
+    use crate::pricing::{DataTransferRules, OperationRules, StorageClassRules, TieredPrice};
     use std::collections::HashMap;
+    use std::str::FromStr;
 
     fn test_rules() -> PricingRules {
         let mut storage_classes = HashMap::new();
@@ -812,20 +813,20 @@ mod tests {
             },
             storage_classes,
             operations,
-            data_transfer: Default::default(),
+            data_transfer: DataTransferRules::default(),
             lifecycle_transitions: HashMap::new(),
         }
     }
 
     #[test]
-    fn simple_put_get_delete() {
+    fn simple_put_get_delete() -> Result<(), Box<dyn std::error::Error>> {
         let rules = test_rules();
         let mut sim = Simulator::new(rules);
 
         let log = OperationLog {
             operations: vec![
                 Operation {
-                    timestamp: "2024-01-01T00:00:00Z".parse().expect("valid timestamp"),
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
                     bucket: "test-bucket".into(),
                     key: Some("file.txt".into()),
                     kind: OperationKind::PutObject {
@@ -834,7 +835,7 @@ mod tests {
                     },
                 },
                 Operation {
-                    timestamp: "2024-01-15T00:00:00Z".parse().expect("valid timestamp"),
+                    timestamp: "2024-01-15T00:00:00Z".parse()?,
                     bucket: "test-bucket".into(),
                     key: Some("file.txt".into()),
                     kind: OperationKind::GetObject {
@@ -843,7 +844,7 @@ mod tests {
                     },
                 },
                 Operation {
-                    timestamp: "2024-02-01T00:00:00Z".parse().expect("valid timestamp"),
+                    timestamp: "2024-02-01T00:00:00Z".parse()?,
                     bucket: "test-bucket".into(),
                     key: Some("file.txt".into()),
                     kind: OperationKind::DeleteObject,
@@ -852,10 +853,11 @@ mod tests {
             metadata: None,
         };
 
-        let report = sim.simulate(&log).expect("simulation should succeed");
+        let report = sim.simulate(&log)?;
 
         assert!(!report.total_cost.is_zero());
         assert_eq!(report.stats.objects_created, 1);
         assert_eq!(report.stats.objects_deleted, 1);
+        Ok(())
     }
 }

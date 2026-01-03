@@ -4,6 +4,7 @@ use crate::types::{Bytes, Money, StorageClass};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use super::TieredPrice;
 
@@ -22,12 +23,11 @@ where
     D: Deserializer<'de>,
 {
     let opt: Option<String> = Option::deserialize(deserializer)?;
-    match opt {
-        Some(s) => Money::from_str(&s)
+    opt.map_or(Ok(None), |s| {
+        Money::from_str(&s)
             .map(Some)
-            .map_err(serde::de::Error::custom),
-        None => Ok(None),
-    }
+            .map_err(serde::de::Error::custom)
+    })
 }
 
 /// Complete pricing rules for a cloud storage provider.
@@ -54,11 +54,13 @@ pub struct PricingRules {
 
 impl PricingRules {
     /// Gets the storage class rules for a given class.
+    #[must_use]
     pub fn get_storage_class(&self, class: &StorageClass) -> Option<&StorageClassRules> {
         self.storage_classes.get(class.as_str())
     }
 
     /// Gets the operation rules for a storage class, with fallback to default.
+    #[must_use]
     pub fn get_operations(&self, class: &StorageClass) -> Option<&OperationRules> {
         self.operations
             .get(class.as_str())
@@ -66,6 +68,7 @@ impl PricingRules {
     }
 
     /// Gets the lifecycle transition cost between two storage classes.
+    #[must_use]
     pub fn get_transition_cost(
         &self,
         from: &StorageClass,
@@ -178,14 +181,15 @@ impl StorageClassRules {
     /// Gets the retrieval cost per GB for a given tier.
     #[must_use]
     pub fn get_retrieval_cost(&self, tier: Option<&str>) -> Money {
-        if let Some(tier_name) = tier {
-            self.retrieval_tiers
-                .iter()
-                .find(|t| t.name.eq_ignore_ascii_case(tier_name))
-                .map_or(Money::ZERO, |t| t.price_per_gb)
-        } else {
-            self.retrieval_price_per_gb.unwrap_or(Money::ZERO)
-        }
+        tier.map_or_else(
+            || self.retrieval_price_per_gb.unwrap_or(Money::ZERO),
+            |tier_name| {
+                self.retrieval_tiers
+                    .iter()
+                    .find(|t| t.name.eq_ignore_ascii_case(tier_name))
+                    .map_or(Money::ZERO, |t| t.price_per_gb)
+            },
+        )
     }
 }
 
@@ -298,13 +302,11 @@ impl DataTransferRules {
     pub fn calculate_egress_cost(&self, gb: Decimal, storage_gb: Decimal) -> Money {
         let free_from_allowance = self
             .free_egress_gb_per_month
-            .map(Decimal::from)
-            .unwrap_or(Decimal::ZERO);
+            .map_or(Decimal::ZERO, Decimal::from);
 
         let free_from_multiplier = self
             .free_egress_storage_multiplier
-            .map(|m| storage_gb * m)
-            .unwrap_or(Decimal::ZERO);
+            .map_or(Decimal::ZERO, |m| storage_gb * m);
 
         let free_total = free_from_allowance + free_from_multiplier;
         let billable = (gb - free_total).max(Decimal::ZERO);

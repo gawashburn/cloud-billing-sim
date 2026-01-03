@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::iter::Sum;
 use std::ops::{Add, AddAssign, Mul};
+use std::str::FromStr;
 
 /// Represents a monetary value with precise decimal arithmetic.
 ///
@@ -15,6 +16,7 @@ use std::ops::{Add, AddAssign, Mul};
 ///
 /// ```
 /// use cloud_billing_sim::types::Money;
+/// use std::str::FromStr;
 ///
 /// let price = Money::from_str("0.023").unwrap(); // $0.023
 /// let total = price * 1000; // $23.00
@@ -51,23 +53,6 @@ impl Money {
         Self(dollars_decimal + cents_decimal)
     }
 
-    /// Creates a `Money` value from a fractional dollar amount string.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the string cannot be parsed as a decimal.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use cloud_billing_sim::types::Money;
-    ///
-    /// let price = Money::from_str("0.023").unwrap();
-    /// ```
-    pub fn from_str(s: &str) -> Result<Self, rust_decimal::Error> {
-        s.parse::<Decimal>().map(Self)
-    }
-
     /// Returns the underlying decimal value.
     #[must_use]
     pub const fn as_decimal(&self) -> Decimal {
@@ -76,7 +61,7 @@ impl Money {
 
     /// Returns true if this amount is zero.
     #[must_use]
-    pub fn is_zero(&self) -> bool {
+    pub const fn is_zero(&self) -> bool {
         self.0.is_zero()
     }
 
@@ -132,6 +117,28 @@ impl Mul<Decimal> for Money {
 impl Sum for Money {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::ZERO, |acc, m| acc + m)
+    }
+}
+
+impl FromStr for Money {
+    type Err = rust_decimal::Error;
+
+    /// Creates a `Money` value from a fractional dollar amount string.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the string cannot be parsed as a decimal.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use cloud_billing_sim::types::Money;
+    /// use std::str::FromStr;
+    ///
+    /// let price = Money::from_str("0.023").unwrap();
+    /// ```
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse::<Decimal>().map(Self)
     }
 }
 

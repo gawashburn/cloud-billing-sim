@@ -126,7 +126,7 @@ impl std::fmt::Display for CostReport {
         if !self.breakdown.storage_by_class.is_empty() {
             writeln!(f, "Storage by Class:")?;
             for (class, cost) in &self.breakdown.storage_by_class {
-                writeln!(f, "  {}: {}", class, cost)?;
+                writeln!(f, "  {class}: {cost}")?;
             }
             writeln!(f)?;
         }
@@ -134,7 +134,7 @@ impl std::fmt::Display for CostReport {
         if !self.breakdown.operations_by_type.is_empty() {
             writeln!(f, "Operations by Type:")?;
             for (op, cost) in &self.breakdown.operations_by_type {
-                writeln!(f, "  {}: {}", op, cost)?;
+                writeln!(f, "  {op}: {cost}")?;
             }
         }
 
