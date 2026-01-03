@@ -70,4 +70,29 @@ mod tests {
         let b = StorageClass::new("STANDARD");
         assert_eq!(a, b);
     }
+
+    #[test]
+    fn display_shows_class_name() {
+        let sc = StorageClass::new("GLACIER");
+        assert_eq!(format!("{sc}"), "GLACIER");
+    }
+
+    #[test]
+    fn from_str_creates_storage_class() {
+        let sc: StorageClass = "intelligent_tiering".into();
+        assert_eq!(sc.as_str(), "INTELLIGENT_TIERING");
+    }
+
+    #[test]
+    fn from_string_creates_storage_class() {
+        let s = String::from("deep_archive");
+        let sc: StorageClass = s.into();
+        assert_eq!(sc.as_str(), "DEEP_ARCHIVE");
+    }
+
+    #[test]
+    fn as_str_returns_normalized() {
+        let sc = StorageClass::new("MixedCase");
+        assert_eq!(sc.as_str(), "MIXEDCASE");
+    }
 }

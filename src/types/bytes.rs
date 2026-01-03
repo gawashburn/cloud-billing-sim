@@ -180,9 +180,60 @@ mod tests {
     }
 
     #[test]
-    fn display_formats_appropriately() {
+    fn display_formats_bytes() {
+        assert_eq!(format!("{}", Bytes::new(0)), "0 B");
         assert_eq!(format!("{}", Bytes::new(500)), "500 B");
+        assert_eq!(format!("{}", Bytes::new(1023)), "1023 B");
+    }
+
+    #[test]
+    fn display_formats_kilobytes() {
         assert_eq!(format!("{}", Bytes::from_kb(1)), "1.00 KB");
+        assert_eq!(format!("{}", Bytes::new(1536)), "1.50 KB"); // 1.5 KB
+        assert_eq!(format!("{}", Bytes::from_kb(512)), "512.00 KB");
+    }
+
+    #[test]
+    fn display_formats_megabytes() {
+        assert_eq!(format!("{}", Bytes::from_mb(1)), "1.00 MB");
+        assert_eq!(format!("{}", Bytes::from_mb(256)), "256.00 MB");
+        assert_eq!(format!("{}", Bytes::from_kb(1536)), "1.50 MB"); // 1.5 MB
+    }
+
+    #[test]
+    fn display_formats_gigabytes() {
+        assert_eq!(format!("{}", Bytes::from_gb(1)), "1.00 GB");
         assert_eq!(format!("{}", Bytes::from_gb(5)), "5.00 GB");
+        assert_eq!(format!("{}", Bytes::from_mb(1536)), "1.50 GB"); // 1.5 GB
+    }
+
+    #[test]
+    fn display_formats_terabytes() {
+        assert_eq!(format!("{}", Bytes::from_tb(1)), "1.00 TB");
+        assert_eq!(format!("{}", Bytes::from_tb(10)), "10.00 TB");
+        assert_eq!(format!("{}", Bytes::from_gb(1536)), "1.50 TB"); // 1.5 TB
+    }
+
+    #[test]
+    fn saturating_sub_prevents_underflow() {
+        let a = Bytes::new(100);
+        let b = Bytes::new(150);
+        assert_eq!(a.saturating_sub(b), Bytes::ZERO);
+
+        let c = Bytes::from_mb(10);
+        let d = Bytes::from_mb(3);
+        assert_eq!(c.saturating_sub(d), Bytes::from_mb(7));
+    }
+
+    #[test]
+    fn new_creates_bytes() {
+        let b = Bytes::new(12345);
+        assert_eq!(b.as_bytes(), 12345);
+    }
+
+    #[test]
+    fn zero_constant() {
+        assert!(Bytes::ZERO.is_zero());
+        assert_eq!(Bytes::ZERO.as_bytes(), 0);
     }
 }

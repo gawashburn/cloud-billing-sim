@@ -235,3 +235,217 @@ impl SimulationStats {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn cost_report_new_is_empty() {
+        let report = CostReport::new();
+        assert!(report.total_cost.is_zero());
+        assert!(report.breakdown.total_storage.is_zero());
+        assert!(report.object_costs.is_empty());
+    }
+
+    #[test]
+    fn add_storage_cost_updates_totals() {
+        let mut report = CostReport::new();
+        let class = StorageClass::new("STANDARD");
+        let amount = Money::from_str("10.00").ok().unwrap_or(Money::ZERO);
+
+        report.add_storage_cost(&class, amount);
+
+        assert_eq!(report.total_cost, amount);
+        assert_eq!(report.breakdown.total_storage, amount);
+        assert_eq!(report.breakdown.storage_by_class.get(&class), Some(&amount));
+    }
+
+    #[test]
+    fn add_storage_cost_accumulates() {
+        let mut report = CostReport::new();
+        let class = StorageClass::new("STANDARD");
+        let amount = Money::from_str("5.00").ok().unwrap_or(Money::ZERO);
+
+        report.add_storage_cost(&class, amount);
+        report.add_storage_cost(&class, amount);
+
+        let expected = Money::from_str("10.00").ok().unwrap_or(Money::ZERO);
+        assert_eq!(report.total_cost, expected);
+        assert_eq!(report.breakdown.storage_by_class.get(&class), Some(&expected));
+    }
+
+    #[test]
+    fn add_operation_cost_updates_totals() {
+        let mut report = CostReport::new();
+        let amount = Money::from_str("0.50").ok().unwrap_or(Money::ZERO);
+
+        report.add_operation_cost("PUT", amount);
+
+        assert_eq!(report.total_cost, amount);
+        assert_eq!(report.breakdown.total_operations, amount);
+        assert_eq!(
+            report.breakdown.operations_by_type.get("PUT"),
+            Some(&amount)
+        );
+    }
+
+    #[test]
+    fn add_egress_cost_updates_totals() {
+        let mut report = CostReport::new();
+        let amount = Money::from_str("2.50").ok().unwrap_or(Money::ZERO);
+
+        report.add_egress_cost(amount);
+
+        assert_eq!(report.total_cost, amount);
+        assert_eq!(report.breakdown.data_transfer_egress, amount);
+    }
+
+    #[test]
+    fn add_retrieval_cost_updates_totals() {
+        let mut report = CostReport::new();
+        let amount = Money::from_str("1.00").ok().unwrap_or(Money::ZERO);
+
+        report.add_retrieval_cost(amount);
+
+        assert_eq!(report.total_cost, amount);
+        assert_eq!(report.breakdown.retrieval, amount);
+    }
+
+    #[test]
+    fn add_early_deletion_penalty_updates_totals() {
+        let mut report = CostReport::new();
+        let amount = Money::from_str("3.00").ok().unwrap_or(Money::ZERO);
+
+        report.add_early_deletion_penalty(amount);
+
+        assert_eq!(report.total_cost, amount);
+        assert_eq!(report.breakdown.early_deletion_penalties, amount);
+    }
+
+    #[test]
+    fn add_transition_cost_updates_totals() {
+        let mut report = CostReport::new();
+        let amount = Money::from_str("0.10").ok().unwrap_or(Money::ZERO);
+
+        report.add_transition_cost(amount);
+
+        assert_eq!(report.total_cost, amount);
+        assert_eq!(report.breakdown.lifecycle_transitions, amount);
+    }
+
+    #[test]
+    fn record_object_cost_creates_entry() {
+        let mut report = CostReport::new();
+        let amount = Money::from_str("1.50").ok().unwrap_or(Money::ZERO);
+
+        report.record_object_cost("bucket/key.txt", "storage", amount);
+
+        let obj = report.object_costs.get("bucket/key.txt");
+        assert!(obj.is_some());
+        let obj = obj.expect("object should exist");
+        assert_eq!(obj.total, amount);
+        assert_eq!(obj.by_category.get("storage"), Some(&amount));
+    }
+
+    #[test]
+    fn record_object_cost_accumulates() {
+        let mut report = CostReport::new();
+        let amount = Money::from_str("1.00").ok().unwrap_or(Money::ZERO);
+
+        report.record_object_cost("bucket/key.txt", "storage", amount);
+        report.record_object_cost("bucket/key.txt", "operations", amount);
+        report.record_object_cost("bucket/key.txt", "storage", amount);
+
+        let obj = report
+            .object_costs
+            .get("bucket/key.txt")
+            .expect("object should exist");
+        let expected_total = Money::from_str("3.00").ok().unwrap_or(Money::ZERO);
+        let expected_storage = Money::from_str("2.00").ok().unwrap_or(Money::ZERO);
+        assert_eq!(obj.total, expected_total);
+        assert_eq!(obj.by_category.get("storage"), Some(&expected_storage));
+        assert_eq!(obj.by_category.get("operations"), Some(&amount));
+    }
+
+    #[test]
+    fn display_produces_output() {
+        let mut report = CostReport::new();
+        let class = StorageClass::new("STANDARD");
+        let amount = Money::from_str("10.00").ok().unwrap_or(Money::ZERO);
+
+        report.add_storage_cost(&class, amount);
+        report.add_operation_cost("PUT", amount);
+
+        let display = format!("{report}");
+        assert!(display.contains("Cost Report"));
+        assert!(display.contains("Total Cost:"));
+        assert!(display.contains("Storage:"));
+        assert!(display.contains("Operations:"));
+        assert!(display.contains("Storage by Class:"));
+        assert!(display.contains("STANDARD"));
+        assert!(display.contains("Operations by Type:"));
+        assert!(display.contains("PUT"));
+    }
+
+    #[test]
+    fn display_empty_report() {
+        let report = CostReport::new();
+        let display = format!("{report}");
+        assert!(display.contains("Cost Report"));
+        assert!(display.contains("$0.0000"));
+    }
+
+    #[test]
+    fn simulation_stats_record_operation() {
+        let mut stats = SimulationStats::default();
+
+        stats.record_operation("PUT");
+        stats.record_operation("PUT");
+        stats.record_operation("GET");
+
+        assert_eq!(stats.total_operations, 3);
+        assert_eq!(stats.operations_by_type.get("PUT"), Some(&2));
+        assert_eq!(stats.operations_by_type.get("GET"), Some(&1));
+    }
+
+    #[test]
+    fn simulation_stats_record_upload() {
+        let mut stats = SimulationStats::default();
+
+        stats.record_upload(Bytes::from_mb(10));
+        stats.record_upload(Bytes::from_mb(5));
+
+        assert_eq!(stats.bytes_uploaded, Bytes::from_mb(15));
+    }
+
+    #[test]
+    fn simulation_stats_record_download() {
+        let mut stats = SimulationStats::default();
+
+        stats.record_download(Bytes::from_gb(1));
+        stats.record_download(Bytes::from_mb(500));
+
+        assert_eq!(
+            stats.bytes_downloaded,
+            Bytes::from_gb(1) + Bytes::from_mb(500)
+        );
+    }
+
+    #[test]
+    fn simulation_stats_update_peak_storage() {
+        let mut stats = SimulationStats::default();
+
+        stats.update_peak_storage(Bytes::from_gb(10));
+        assert_eq!(stats.peak_storage, Bytes::from_gb(10));
+
+        // Lower value doesn't update peak
+        stats.update_peak_storage(Bytes::from_gb(5));
+        assert_eq!(stats.peak_storage, Bytes::from_gb(10));
+
+        // Higher value updates peak
+        stats.update_peak_storage(Bytes::from_gb(20));
+        assert_eq!(stats.peak_storage, Bytes::from_gb(20));
+    }
+}

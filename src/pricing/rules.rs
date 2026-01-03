@@ -353,6 +353,37 @@ mod tests {
         }
     }
 
+    fn sample_storage_class_rules_with_tiers() -> StorageClassRules {
+        StorageClassRules {
+            storage_price_per_gb_month: TieredPrice::flat(
+                Money::from_str("0.023").ok().unwrap_or(Money::ZERO),
+            ),
+            min_billable_size_bytes: None,
+            min_storage_duration_days: None,
+            metadata_overhead_bytes: Some(32 * 1024), // 32 KB overhead
+            retrieval_price_per_gb: None,
+            retrieval_tiers: vec![
+                RetrievalTier {
+                    name: "expedited".to_string(),
+                    price_per_gb: Money::from_str("0.03").ok().unwrap_or(Money::ZERO),
+                    price_per_1000_requests: None,
+                },
+                RetrievalTier {
+                    name: "standard".to_string(),
+                    price_per_gb: Money::from_str("0.01").ok().unwrap_or(Money::ZERO),
+                    price_per_1000_requests: None,
+                },
+                RetrievalTier {
+                    name: "bulk".to_string(),
+                    price_per_gb: Money::from_str("0.0025").ok().unwrap_or(Money::ZERO),
+                    price_per_1000_requests: None,
+                },
+            ],
+            intelligent_tiering: false,
+            monitoring_price_per_1000_objects: None,
+        }
+    }
+
     #[test]
     fn billable_size_respects_minimum() {
         let rules = sample_storage_class_rules();
@@ -367,6 +398,33 @@ mod tests {
     }
 
     #[test]
+    fn billable_size_adds_metadata_overhead() {
+        let rules = sample_storage_class_rules_with_tiers();
+
+        // Object size plus 32 KB overhead
+        let size = Bytes::from_mb(1);
+        let billable = rules.billable_size(size);
+        assert_eq!(billable, Bytes::from_mb(1) + Bytes::from_kb(32));
+    }
+
+    #[test]
+    fn billable_size_no_minimum_no_overhead() {
+        let rules = StorageClassRules {
+            storage_price_per_gb_month: TieredPrice::default(),
+            min_billable_size_bytes: None,
+            min_storage_duration_days: None,
+            metadata_overhead_bytes: None,
+            retrieval_price_per_gb: None,
+            retrieval_tiers: vec![],
+            intelligent_tiering: false,
+            monitoring_price_per_1000_objects: None,
+        };
+
+        let size = Bytes::new(100);
+        assert_eq!(rules.billable_size(size), size);
+    }
+
+    #[test]
     fn early_deletion_penalty_calculation() {
         let rules = sample_storage_class_rules();
 
@@ -377,5 +435,196 @@ mod tests {
         // Penalty for early deletion
         let cost = rules.early_deletion_cost(Bytes::from_gb(1), 15);
         assert!(!cost.is_zero());
+    }
+
+    #[test]
+    fn early_deletion_no_min_duration() {
+        let mut rules = sample_storage_class_rules();
+        rules.min_storage_duration_days = None;
+
+        // No penalty when no min duration
+        let cost = rules.early_deletion_cost(Bytes::from_gb(1), 1);
+        assert!(cost.is_zero());
+    }
+
+    #[test]
+    fn retrieval_cost_with_base_price() {
+        let rules = sample_storage_class_rules();
+
+        // No tier specified - use base retrieval price
+        let cost = rules.get_retrieval_cost(None);
+        assert_eq!(cost, Money::from_str("0.01").ok().unwrap_or(Money::ZERO));
+    }
+
+    #[test]
+    fn retrieval_cost_with_tier() {
+        let rules = sample_storage_class_rules_with_tiers();
+
+        // Get expedited tier cost
+        let cost = rules.get_retrieval_cost(Some("expedited"));
+        assert_eq!(cost, Money::from_str("0.03").ok().unwrap_or(Money::ZERO));
+
+        // Get standard tier cost (case insensitive)
+        let cost = rules.get_retrieval_cost(Some("STANDARD"));
+        assert_eq!(cost, Money::from_str("0.01").ok().unwrap_or(Money::ZERO));
+
+        // Get bulk tier cost
+        let cost = rules.get_retrieval_cost(Some("bulk"));
+        assert_eq!(cost, Money::from_str("0.0025").ok().unwrap_or(Money::ZERO));
+
+        // Unknown tier returns zero
+        let cost = rules.get_retrieval_cost(Some("unknown"));
+        assert!(cost.is_zero());
+    }
+
+    #[test]
+    fn retrieval_cost_no_tiers_no_base() {
+        let rules = StorageClassRules {
+            storage_price_per_gb_month: TieredPrice::default(),
+            min_billable_size_bytes: None,
+            min_storage_duration_days: None,
+            metadata_overhead_bytes: None,
+            retrieval_price_per_gb: None,
+            retrieval_tiers: vec![],
+            intelligent_tiering: false,
+            monitoring_price_per_1000_objects: None,
+        };
+
+        let cost = rules.get_retrieval_cost(None);
+        assert!(cost.is_zero());
+    }
+
+    #[test]
+    fn storage_cost_calculation() {
+        let rules = sample_storage_class_rules();
+
+        // 1 GB for half a month
+        let cost = rules.calculate_storage_cost(Bytes::from_gb(1), Decimal::new(5, 1));
+        // 1 GB * $0.023 * 0.5 = $0.0115
+        assert!(!cost.is_zero());
+    }
+
+    #[test]
+    fn operation_rules_cost_for_operation() {
+        let rules = OperationRules {
+            put_per_1000: Some(Money::from_str("5.00").ok().unwrap_or(Money::ZERO)),
+            get_per_1000: Some(Money::from_str("0.40").ok().unwrap_or(Money::ZERO)),
+            list_per_1000: Some(Money::from_str("5.00").ok().unwrap_or(Money::ZERO)),
+            delete_per_1000: None, // Free
+            head_per_1000: Some(Money::from_str("0.40").ok().unwrap_or(Money::ZERO)),
+            lifecycle_transition_per_1000: Some(
+                Money::from_str("10.00").ok().unwrap_or(Money::ZERO),
+            ),
+        };
+
+        // PUT operation cost: $5.00 / 1000 = $0.005
+        let put_cost = rules.cost_for_operation(OperationType::Put);
+        assert!(!put_cost.is_zero());
+
+        // COPY operation cost (same as PUT)
+        let copy_cost = rules.cost_for_operation(OperationType::Copy);
+        assert_eq!(copy_cost, put_cost);
+
+        // POST operation cost (same as PUT)
+        let post_cost = rules.cost_for_operation(OperationType::Post);
+        assert_eq!(post_cost, put_cost);
+
+        // GET operation cost
+        let get_cost = rules.cost_for_operation(OperationType::Get);
+        assert!(!get_cost.is_zero());
+
+        // SELECT operation cost (same as GET)
+        let select_cost = rules.cost_for_operation(OperationType::Select);
+        assert_eq!(select_cost, get_cost);
+
+        // LIST operation cost
+        let list_cost = rules.cost_for_operation(OperationType::List);
+        assert!(!list_cost.is_zero());
+
+        // DELETE operation cost (free)
+        let delete_cost = rules.cost_for_operation(OperationType::Delete);
+        assert!(delete_cost.is_zero());
+
+        // HEAD operation cost
+        let head_cost = rules.cost_for_operation(OperationType::Head);
+        assert!(!head_cost.is_zero());
+
+        // Lifecycle transition cost
+        let transition_cost = rules.cost_for_operation(OperationType::LifecycleTransition);
+        assert!(!transition_cost.is_zero());
+    }
+
+    #[test]
+    fn data_transfer_egress_cost_no_free_tier() {
+        let rules = DataTransferRules {
+            ingress_price_per_gb: TieredPrice::default(),
+            egress_price_per_gb: TieredPrice::flat(
+                Money::from_str("0.09").ok().unwrap_or(Money::ZERO),
+            ),
+            free_egress_gb_per_month: None,
+            free_egress_storage_multiplier: None,
+        };
+
+        // 100 GB egress at $0.09/GB = $9.00
+        let cost = rules.calculate_egress_cost(Decimal::from(100), Decimal::ZERO);
+        assert_eq!(cost, Money::from_str("9.00").ok().unwrap_or(Money::ZERO));
+    }
+
+    #[test]
+    fn data_transfer_egress_cost_with_free_allowance() {
+        let rules = DataTransferRules {
+            ingress_price_per_gb: TieredPrice::default(),
+            egress_price_per_gb: TieredPrice::flat(
+                Money::from_str("0.09").ok().unwrap_or(Money::ZERO),
+            ),
+            free_egress_gb_per_month: Some(100), // 100 GB free
+            free_egress_storage_multiplier: None,
+        };
+
+        // 50 GB egress with 100 GB free = $0
+        let cost = rules.calculate_egress_cost(Decimal::from(50), Decimal::ZERO);
+        assert!(cost.is_zero());
+
+        // 150 GB egress with 100 GB free = 50 GB * $0.09 = $4.50
+        let cost = rules.calculate_egress_cost(Decimal::from(150), Decimal::ZERO);
+        assert_eq!(cost, Money::from_str("4.50").ok().unwrap_or(Money::ZERO));
+    }
+
+    #[test]
+    fn data_transfer_egress_cost_with_storage_multiplier() {
+        let rules = DataTransferRules {
+            ingress_price_per_gb: TieredPrice::default(),
+            egress_price_per_gb: TieredPrice::flat(
+                Money::from_str("0.01").ok().unwrap_or(Money::ZERO),
+            ),
+            free_egress_gb_per_month: None,
+            free_egress_storage_multiplier: Some(Decimal::from(3)), // 3x storage free
+        };
+
+        // 100 GB storage = 300 GB free egress
+        // 200 GB egress with 300 GB free = $0
+        let cost = rules.calculate_egress_cost(Decimal::from(200), Decimal::from(100));
+        assert!(cost.is_zero());
+
+        // 400 GB egress with 300 GB free = 100 GB * $0.01 = $1.00
+        let cost = rules.calculate_egress_cost(Decimal::from(400), Decimal::from(100));
+        assert_eq!(cost, Money::from_str("1.00").ok().unwrap_or(Money::ZERO));
+    }
+
+    #[test]
+    fn data_transfer_combined_free_tiers() {
+        let rules = DataTransferRules {
+            ingress_price_per_gb: TieredPrice::default(),
+            egress_price_per_gb: TieredPrice::flat(
+                Money::from_str("0.10").ok().unwrap_or(Money::ZERO),
+            ),
+            free_egress_gb_per_month: Some(100),
+            free_egress_storage_multiplier: Some(Decimal::from(2)),
+        };
+
+        // 50 GB storage = 100 GB from multiplier + 100 GB allowance = 200 GB free
+        // 250 GB egress = 50 GB billable * $0.10 = $5.00
+        let cost = rules.calculate_egress_cost(Decimal::from(250), Decimal::from(50));
+        assert_eq!(cost, Money::from_str("5.00").ok().unwrap_or(Money::ZERO));
     }
 }
