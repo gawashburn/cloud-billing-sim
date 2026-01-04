@@ -30,6 +30,16 @@ pub enum ValidationError {
     #[error("HTTP request failed: {0}")]
     Http(#[from] reqwest::Error),
 
+    /// Azure authentication error.
+    #[cfg(feature = "azure-validation")]
+    #[error("Azure authentication failed: {0}")]
+    AzureAuth(String),
+
+    /// Azure operation failed.
+    #[cfg(feature = "azure-validation")]
+    #[error("Azure operation failed: {0}")]
+    AzureOperation(String),
+
     /// Billing data not available.
     #[error("billing data not available: {0}")]
     BillingNotAvailable(String),

@@ -1,0 +1,190 @@
+# Azure Blob Storage Pricing Rules - East US
+# Based on https://azure.microsoft.com/en-us/pricing/details/storage/blobs/
+# Prices are for LRS (Locally Redundant Storage) in USD
+# As of January 2024
+
+[provider]
+name = "azure-blob"
+region = "eastus"
+version = "2024-01"
+currency = "USD"
+
+# =============================================================================
+# Storage Classes (Access Tiers)
+# =============================================================================
+
+[storage_classes.HOT]
+# Hot tier - frequently accessed data
+# First 50 TB: $0.018/GB, Next 450 TB: $0.0173/GB, Over 500 TB: $0.0166/GB
+storage_price_per_gb_month = [
+    { up_to_gb = 51200, price = "0.018" },
+    { up_to_gb = 512000, price = "0.0173" },
+    { price = "0.0166" }
+]
+
+[storage_classes.COOL]
+# Cool tier - infrequently accessed data
+storage_price_per_gb_month = "0.01"
+min_storage_duration_days = 30
+retrieval_price_per_gb = "0.01"
+
+[storage_classes.COLD]
+# Cold tier - rarely accessed data
+storage_price_per_gb_month = "0.0045"
+min_storage_duration_days = 90
+retrieval_price_per_gb = "0.03"
+
+[storage_classes.ARCHIVE]
+# Archive tier - long-term backup and archival
+storage_price_per_gb_month = "0.002"
+min_storage_duration_days = 180
+# High-priority rehydration
+retrieval_price_per_gb = "0.02"
+
+[[storage_classes.ARCHIVE.retrieval_tiers]]
+name = "high"
+price_per_gb = "0.02"
+
+[[storage_classes.ARCHIVE.retrieval_tiers]]
+name = "standard"
+price_per_gb = "0.01"
+
+# =============================================================================
+# Operations Pricing
+# =============================================================================
+
+[operations.DEFAULT]
+# Hot tier operations (per 10,000 operations, converted to per 1,000)
+# Write operations: $0.055 per 10,000 = $0.0055 per 1,000
+put_per_1000 = "0.0055"
+# Read operations: $0.0044 per 10,000 = $0.00044 per 1,000
+get_per_1000 = "0.00044"
+# List operations: $0.055 per 10,000 = $0.0055 per 1,000
+list_per_1000 = "0.0055"
+# Delete is free
+delete_per_1000 = "0"
+# Other operations (like HEAD): $0.0044 per 10,000
+head_per_1000 = "0.00044"
+
+[operations.HOT]
+put_per_1000 = "0.0055"
+get_per_1000 = "0.00044"
+list_per_1000 = "0.0055"
+delete_per_1000 = "0"
+head_per_1000 = "0.00044"
+
+[operations.COOL]
+# Cool tier has higher operation costs
+# Write: $0.10 per 10,000 = $0.01 per 1,000
+put_per_1000 = "0.01"
+# Read: $0.01 per 10,000 = $0.001 per 1,000
+get_per_1000 = "0.001"
+list_per_1000 = "0.01"
+delete_per_1000 = "0"
+head_per_1000 = "0.001"
+
+[operations.COLD]
+# Cold tier has even higher operation costs
+# Write: $0.18 per 10,000 = $0.018 per 1,000
+put_per_1000 = "0.018"
+# Read: $0.10 per 10,000 = $0.01 per 1,000
+get_per_1000 = "0.01"
+list_per_1000 = "0.018"
+delete_per_1000 = "0"
+head_per_1000 = "0.01"
+
+[operations.ARCHIVE]
+# Archive tier operations
+# Write: $0.10 per 10,000 = $0.01 per 1,000
+put_per_1000 = "0.01"
+# Read (requires rehydration first): $0.055 per 10,000
+get_per_1000 = "0.0055"
+list_per_1000 = "0.01"
+delete_per_1000 = "0"
+head_per_1000 = "0.0055"
+
+# =============================================================================
+# Data Transfer
+# =============================================================================
+
+[data_transfer]
+# Ingress (upload) is FREE
+ingress_price_per_gb = "0"
+
+# Egress (download) pricing - tiered
+# Zone 1 (Americas, Europe):
+egress_price_per_gb = [
+    { up_to_gb = 5, price = "0" },           # First 5 GB free
+    { up_to_gb = 10240, price = "0.087" },    # Up to 10 TB
+    { up_to_gb = 51200, price = "0.083" },    # 10-50 TB
+    { up_to_gb = 153600, price = "0.07" },    # 50-150 TB
+    { up_to_gb = 512000, price = "0.05" },    # 150-500 TB
+    { price = "0.05" }                         # Over 500 TB
+]
+
+# =============================================================================
+# Lifecycle Transitions (Set Blob Tier)
+# =============================================================================
+
+# Note: Azure charges per 10,000 operations for tier changes
+# $0.10 per 10,000 = $0.01 per 1,000
+
+[lifecycle_transitions.HOT_to_COOL]
+per_1000_requests = "0.01"
+
+[lifecycle_transitions.HOT_to_COLD]
+per_1000_requests = "0.01"
+
+[lifecycle_transitions.HOT_to_ARCHIVE]
+per_1000_requests = "0.01"
+
+[lifecycle_transitions.COOL_to_HOT]
+per_1000_requests = "0.01"
+
+[lifecycle_transitions.COOL_to_COLD]
+per_1000_requests = "0.01"
+
+[lifecycle_transitions.COOL_to_ARCHIVE]
+per_1000_requests = "0.01"
+
+[lifecycle_transitions.COLD_to_HOT]
+per_1000_requests = "0.01"
+
+[lifecycle_transitions.COLD_to_COOL]
+per_1000_requests = "0.01"
+
+[lifecycle_transitions.COLD_to_ARCHIVE]
+per_1000_requests = "0.01"
+
+# Archive rehydration is more expensive
+[lifecycle_transitions.ARCHIVE_to_HOT]
+per_1000_requests = "0.01"
+
+[lifecycle_transitions.ARCHIVE_to_COOL]
+per_1000_requests = "0.01"
+
+[lifecycle_transitions.ARCHIVE_to_COLD]
+per_1000_requests = "0.01"
+
+# =============================================================================
+# Additional Notes
+# =============================================================================
+
+# Azure Blob Storage supports:
+# - Block blobs (most common, what this config targets)
+# - Append blobs (for logging)
+# - Page blobs (for VHDs)
+#
+# Redundancy options (this config uses LRS):
+# - LRS (Locally Redundant Storage) - cheapest
+# - ZRS (Zone Redundant Storage)
+# - GRS (Geo Redundant Storage)
+# - RA-GRS (Read-Access Geo Redundant Storage)
+# - GZRS (Geo-Zone Redundant Storage)
+# - RA-GZRS (Read-Access Geo-Zone Redundant Storage)
+#
+# Archive tier rehydration:
+# - High priority: 1-15 hours for objects < 10GB
+# - Standard priority: up to 15 hours
+#
+# Early deletion charges apply if objects are deleted before minimum duration

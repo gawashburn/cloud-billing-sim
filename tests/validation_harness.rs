@@ -1,7 +1,7 @@
 //! Integration test harness for cloud provider validation.
 //!
 //! This module provides utilities for running validation tests against
-//! real cloud providers (S3, B2, R2).
+//! real cloud providers (S3, B2, R2, Azure).
 //!
 //! # Running Tests
 //!
@@ -17,6 +17,9 @@
 //!
 //! # R2 validation tests
 //! cargo test --features r2-validation validation_r2 -- --ignored
+//!
+//! # Azure validation tests
+//! cargo test --features azure-validation validation_azure -- --ignored
 //! ```
 //!
 //! # Environment Variables
@@ -36,6 +39,11 @@
 //! - `R2_ACCESS_KEY_ID`: R2 access key ID
 //! - `R2_SECRET_ACCESS_KEY`: R2 secret access key
 //! - `TEST_R2_BUCKET`: R2 bucket name
+//!
+//! For Azure:
+//! - `AZURE_STORAGE_ACCOUNT`: Azure storage account name
+//! - `AZURE_STORAGE_ACCESS_KEY`: Storage account access key
+//! - `TEST_AZURE_CONTAINER`: Azure blob container name
 
 #![allow(dead_code)]
 
@@ -282,6 +290,18 @@ pub fn r2_env_configured() -> bool {
 /// Gets the test R2 bucket name.
 pub fn get_r2_bucket() -> Option<String> {
     std::env::var("TEST_R2_BUCKET").ok()
+}
+
+/// Checks if Azure validation environment is configured.
+pub fn azure_env_configured() -> bool {
+    std::env::var("AZURE_STORAGE_ACCOUNT").is_ok()
+        && std::env::var("AZURE_STORAGE_ACCESS_KEY").is_ok()
+        && std::env::var("TEST_AZURE_CONTAINER").is_ok()
+}
+
+/// Gets the test Azure container name.
+pub fn get_azure_container() -> Option<String> {
+    std::env::var("TEST_AZURE_CONTAINER").ok()
 }
 
 #[cfg(test)]

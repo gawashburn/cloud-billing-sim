@@ -15,6 +15,7 @@ default = []
 s3-validation = ["dep:aws-sdk-s3", "dep:aws-sdk-pricing", "dep:aws-config", "dep:tokio"]
 b2-validation = ["dep:reqwest", "dep:tokio"]
 r2-validation = ["dep:aws-sdk-s3", "dep:aws-config", "dep:tokio"]
+azure-validation = ["dep:azure_storage_blobs", "dep:azure_storage", "dep:azure_identity", "dep:tokio", "dep:futures", "dep:url"]
 
 [dependencies]
 thiserror = "1"
@@ -34,6 +35,13 @@ aws-sdk-pricing = { version = "1", optional = true }
 aws-config = { version = "1", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
 reqwest = { version = "0.12", features = ["json"], optional = true }
+
+# Azure SDK dependencies
+azure_storage_blobs = { version = "0.21", optional = true }
+azure_storage = { version = "0.21", optional = true }
+azure_identity = { version = "0.21", optional = true }
+futures = { version = "0.3", optional = true }
+url = { version = "2", optional = true }
 
 [dev-dependencies]
 proptest = "1"
