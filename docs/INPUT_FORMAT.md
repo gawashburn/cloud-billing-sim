@@ -391,6 +391,99 @@ Advance time without performing any cloud operation. This is used to calculate s
 
 ---
 
+### `set_bucket_versioning`
+
+Enable or disable versioning on a bucket. When versioning is enabled, updating an object creates a new version instead of replacing the existing one. Previous versions continue to incur storage costs.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `enabled` | Boolean | Yes | — | Whether versioning is enabled |
+
+**Note:** The `key` field is not required for this operation.
+
+**Example:**
+```json
+{
+  "timestamp": "2024-01-01T00:00:00Z",
+  "operation": "set_bucket_versioning",
+  "bucket": "my-versioned-bucket",
+  "enabled": true
+}
+```
+
+---
+
+### `delete_object_version`
+
+Delete a specific version of an object. This is used when versioning is enabled to remove old versions. Early deletion penalties may apply if the version hasn't met minimum storage duration requirements.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `version_id` | String | Yes | — | Version ID to delete |
+
+**Example:**
+```json
+{
+  "timestamp": "2024-01-15T10:00:00Z",
+  "operation": "delete_object_version",
+  "bucket": "my-versioned-bucket",
+  "key": "documents/report.pdf",
+  "version_id": "1704067200000000000"
+}
+```
+
+---
+
+### `replicate_object`
+
+Replicate an object to another region. This represents cross-region replication and incurs data transfer (egress) costs plus a PUT operation cost in the destination region.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `destination_region` | String | Yes | — | Target region for the replica |
+| `destination_bucket` | String | No | Same as source | Destination bucket name |
+| `destination_key` | String | No | Same as source | Destination object key |
+| `storage_class` | String | No | Same as source | Storage class for the replica |
+
+**Example:**
+```json
+{
+  "timestamp": "2024-01-15T10:00:00Z",
+  "operation": "replicate_object",
+  "bucket": "primary-bucket",
+  "key": "data/important-file.bin",
+  "destination_region": "eu-west-1",
+  "destination_bucket": "backup-bucket-eu",
+  "storage_class": "STANDARD_IA"
+}
+```
+
+**Use case:** Cross-region disaster recovery:
+```json
+{
+  "operations": [
+    {
+      "timestamp": "2024-01-01T00:00:00Z",
+      "operation": "put_object",
+      "bucket": "us-east-1-primary",
+      "key": "critical-data.tar",
+      "size_bytes": 10737418240,
+      "storage_class": "STANDARD"
+    },
+    {
+      "timestamp": "2024-01-01T00:01:00Z",
+      "operation": "replicate_object",
+      "bucket": "us-east-1-primary",
+      "key": "critical-data.tar",
+      "destination_region": "eu-west-1",
+      "destination_bucket": "eu-west-1-replica"
+    }
+  ]
+}
+```
+
+---
+
 ## Complete Example
 
 ```json

@@ -268,6 +268,9 @@ fn validate_operations(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>>
             operations::OperationKind::LifecycleTransition { .. } => "LifecycleTransition",
             operations::OperationKind::SelectObjectContent { .. } => "SelectObjectContent",
             operations::OperationKind::Wait { .. } => "Wait",
+            operations::OperationKind::SetBucketVersioning { .. } => "SetBucketVersioning",
+            operations::OperationKind::DeleteObjectVersion { .. } => "DeleteObjectVersion",
+            operations::OperationKind::ReplicateObject { .. } => "ReplicateObject",
         };
         *by_type.entry(type_name).or_insert(0u64) += 1;
     }

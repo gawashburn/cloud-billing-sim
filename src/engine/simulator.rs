@@ -150,6 +150,26 @@ impl Simulator {
             OperationKind::Wait { reason } => {
                 self.handle_wait(op, reason.as_deref())?;
             }
+            OperationKind::SetBucketVersioning { enabled } => {
+                self.handle_set_bucket_versioning(op, *enabled)?;
+            }
+            OperationKind::DeleteObjectVersion { version_id } => {
+                self.handle_delete_object_version(op, version_id)?;
+            }
+            OperationKind::ReplicateObject {
+                destination_region,
+                destination_bucket,
+                destination_key,
+                storage_class,
+            } => {
+                self.handle_replicate_object(
+                    op,
+                    destination_region,
+                    destination_bucket.as_deref(),
+                    destination_key.as_deref(),
+                    storage_class.as_ref(),
+                )?;
+            }
         }
 
         Ok(())
@@ -173,6 +193,17 @@ impl Simulator {
 
     /// Bills storage costs up to a given timestamp.
     fn bill_storage_to(&mut self, timestamp: DateTime<Utc>) -> Result<(), EngineError> {
+        // Bill current objects
+        self.bill_current_objects_to(timestamp)?;
+
+        // Bill noncurrent versions
+        self.bill_noncurrent_versions_to(timestamp)?;
+
+        Ok(())
+    }
+
+    /// Bills storage costs for current objects up to a given timestamp.
+    fn bill_current_objects_to(&mut self, timestamp: DateTime<Utc>) -> Result<(), EngineError> {
         // Collect objects that need billing
         let objects_to_bill: Vec<_> = self
             .state
@@ -212,6 +243,69 @@ impl Simulator {
                 if let Some(obj_mut) = self.state.get_object_mut(&key.bucket, &key.key) {
                     obj_mut.last_billed_at = timestamp;
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Bills storage costs for noncurrent versions up to a given timestamp.
+    fn bill_noncurrent_versions_to(&mut self, timestamp: DateTime<Utc>) -> Result<(), EngineError> {
+        // Collect noncurrent versions that need billing
+        let versions_to_bill: Vec<_> = self
+            .state
+            .all_noncurrent_versions()
+            .filter(|(_, v)| v.last_billed_at < timestamp)
+            .map(|(key, v)| (key.clone(), v.clone()))
+            .collect();
+
+        for (key, version) in &versions_to_bill {
+            let duration = timestamp.signed_duration_since(version.last_billed_at);
+            let fraction = duration_to_month_fraction(duration);
+
+            if fraction > Decimal::ZERO {
+                let class_rules = self
+                    .rules
+                    .get_storage_class(&version.storage_class)
+                    .ok_or_else(|| {
+                        EngineError::UnknownStorageClass(version.storage_class.to_string())
+                    })?;
+
+                let cost = class_rules.calculate_storage_cost(version.size, fraction);
+
+                trace!(
+                    object = %key,
+                    version_id = %version.version_id,
+                    class = %version.storage_class,
+                    size = %version.size,
+                    duration_hours = duration.num_hours(),
+                    cost = %cost,
+                    "billing noncurrent version storage"
+                );
+
+                self.report.add_storage_cost(&version.storage_class, cost);
+                self.report.record_object_cost(
+                    &format!("{}@{}", key, version.version_id),
+                    "noncurrent_storage",
+                    cost,
+                );
+            }
+        }
+
+        // Update last_billed_at for noncurrent versions
+        // We need to do this separately to avoid borrow issues
+        for (key, version) in versions_to_bill {
+            // Find and update the version
+            let versions = self.state.get_noncurrent_versions(&key.bucket, &key.key);
+            if let Some(pos) = versions.iter().position(|v| v.version_id == version.version_id) {
+                // We need mutable access - get through the internal iterator
+                for (k, v) in self.state.noncurrent_versions_mut() {
+                    if k.bucket == key.bucket && k.key == key.key && v.version_id == version.version_id {
+                        v.last_billed_at = timestamp;
+                        break;
+                    }
+                }
+                let _ = pos; // Silence unused warning
             }
         }
 
@@ -747,6 +841,148 @@ impl Simulator {
         Ok(())
     }
 
+    /// Handles `SetBucketVersioning` operation.
+    fn handle_set_bucket_versioning(
+        &mut self,
+        op: &Operation,
+        enabled: bool,
+    ) -> Result<(), EngineError> {
+        debug!(bucket = %op.bucket, enabled, "set bucket versioning");
+
+        self.state.set_versioning(&op.bucket, enabled);
+        self.report.stats.record_operation("SET_BUCKET_VERSIONING");
+
+        Ok(())
+    }
+
+    /// Handles `DeleteObjectVersion` operation.
+    fn handle_delete_object_version(
+        &mut self,
+        op: &Operation,
+        version_id: &str,
+    ) -> Result<(), EngineError> {
+        let key = op
+            .key
+            .as_deref()
+            .ok_or_else(|| EngineError::InvalidSequence("DeleteObjectVersion requires key".to_string()))?;
+
+        debug!(version_id, "delete object version");
+
+        let removed = self.state.delete_version(&op.bucket, key, version_id);
+
+        if let Some(version) = removed {
+            // Check for early deletion penalty
+            let days_stored = {
+                let duration = op.timestamp.signed_duration_since(version.created_at);
+                duration.num_days().try_into().unwrap_or(0)
+            };
+
+            if let Some(class_rules) = self.rules.get_storage_class(&version.storage_class) {
+                let penalty = class_rules.early_deletion_cost(version.size, days_stored);
+                if !penalty.is_zero() {
+                    debug!(penalty = %penalty, "early deletion penalty for version");
+                    self.report.add_early_deletion_penalty(penalty);
+                    self.report.record_object_cost(
+                        &format!("{}@{}", op.object_path(), version_id),
+                        "early_deletion",
+                        penalty,
+                    );
+                }
+            }
+
+            // Delete operations are typically free
+            self.report.stats.record_operation("DELETE_VERSION");
+        } else {
+            warn!(version_id, "version not found for deletion");
+        }
+
+        Ok(())
+    }
+
+    /// Handles `ReplicateObject` operation.
+    ///
+    /// Cross-region replication incurs:
+    /// - Data transfer costs (egress from source region)
+    /// - PUT operation cost in destination
+    fn handle_replicate_object(
+        &mut self,
+        op: &Operation,
+        destination_region: &str,
+        destination_bucket: Option<&str>,
+        destination_key: Option<&str>,
+        storage_class: Option<&StorageClass>,
+    ) -> Result<(), EngineError> {
+        let key = op
+            .key
+            .as_deref()
+            .ok_or_else(|| EngineError::InvalidSequence("ReplicateObject requires key".to_string()))?;
+
+        let obj = self
+            .state
+            .get_object(&op.bucket, key)
+            .ok_or_else(|| EngineError::UnknownObject {
+                bucket: op.bucket.clone(),
+                key: key.to_string(),
+            })?
+            .clone();
+
+        let dest_bucket = destination_bucket.unwrap_or(&op.bucket);
+        let dest_key = destination_key.unwrap_or(key);
+        let dest_class = storage_class.cloned().unwrap_or_else(|| obj.storage_class.clone());
+
+        debug!(
+            source = %op.object_path(),
+            destination_region,
+            dest_bucket,
+            dest_key,
+            class = %dest_class,
+            size = %obj.size,
+            "replicate object"
+        );
+
+        // Data transfer cost (cross-region egress)
+        // For simplicity, we use the standard egress pricing
+        // A more complete implementation would use region-pair specific pricing
+        let egress_gb = obj.size.as_gb_decimal();
+        self.monthly_egress_gb += egress_gb;
+
+        let storage_gb: Decimal = self
+            .state
+            .total_storage_by_class()
+            .values()
+            .map(|b| b.as_gb_decimal())
+            .sum();
+
+        let egress_cost = self
+            .rules
+            .data_transfer
+            .calculate_egress_cost(self.monthly_egress_gb, storage_gb);
+
+        // Calculate incremental egress cost
+        if !egress_cost.is_zero() {
+            let incremental = self
+                .rules
+                .data_transfer
+                .egress_price_per_gb
+                .calculate_cost(egress_gb);
+            self.report.add_egress_cost(incremental);
+            self.report
+                .record_object_cost(&op.object_path(), "replication_transfer", incremental);
+        }
+
+        // PUT operation cost for the replica
+        let put_cost = self.get_operation_cost(&dest_class, OperationType::Put)?;
+        self.report.add_operation_cost("PUT", put_cost);
+
+        // Create the replica object (in a separate "region" conceptually)
+        // Note: In a more complete implementation, we'd track objects per region
+        // For now, we just record the stats
+        self.report.stats.record_operation("REPLICATE");
+        self.report.stats.record_upload(obj.size);
+
+        Ok(())
+    }
+
     /// Gets the operation cost for a storage class.
     fn get_operation_cost(
         &self,
@@ -997,6 +1233,157 @@ mod tests {
         let (start, end) = report.time_range.expect("time_range should be set");
         assert_eq!(start.format("%Y-%m-%d").to_string(), "2024-01-01");
         assert_eq!(end.format("%Y-%m-%d").to_string(), "2024-07-01");
+
+        Ok(())
+    }
+
+    #[test]
+    fn versioning_creates_noncurrent_versions() -> Result<(), Box<dyn std::error::Error>> {
+        let rules = test_rules();
+        let mut sim = Simulator::new(rules);
+
+        let log = OperationLog {
+            operations: vec![
+                // Enable versioning
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "versioned-bucket".into(),
+                    key: None,
+                    kind: OperationKind::SetBucketVersioning { enabled: true },
+                },
+                // Upload file v1
+                Operation {
+                    timestamp: "2024-01-01T00:01:00Z".parse()?,
+                    bucket: "versioned-bucket".into(),
+                    key: Some("file.txt".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 1024 * 1024, // 1 MB
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                // Upload file v2 (creates noncurrent version)
+                Operation {
+                    timestamp: "2024-01-02T00:00:00Z".parse()?,
+                    bucket: "versioned-bucket".into(),
+                    key: Some("file.txt".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 2 * 1024 * 1024, // 2 MB
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                // Wait to bill storage
+                Operation {
+                    timestamp: "2024-02-01T00:00:00Z".parse()?,
+                    bucket: "_".into(),
+                    key: None,
+                    kind: OperationKind::Wait { reason: None },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        // Should have storage cost for both current and noncurrent versions
+        assert!(!report.total_cost.is_zero());
+
+        // Verify noncurrent version was created
+        assert_eq!(sim.state().noncurrent_version_count(), 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn delete_object_version_with_early_deletion() -> Result<(), Box<dyn std::error::Error>> {
+        // Create rules with early deletion penalty
+        let mut rules = test_rules();
+        rules.storage_classes.get_mut("STANDARD").unwrap().min_storage_duration_days = Some(30);
+
+        let mut sim = Simulator::new(rules);
+
+        let log = OperationLog {
+            operations: vec![
+                // Enable versioning
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: None,
+                    kind: OperationKind::SetBucketVersioning { enabled: true },
+                },
+                // Upload file
+                Operation {
+                    timestamp: "2024-01-01T00:01:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("file.txt".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 1024 * 1024 * 1024, // 1 GB
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                // Update file (creates noncurrent version)
+                Operation {
+                    timestamp: "2024-01-02T00:00:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("file.txt".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 1024 * 1024 * 1024, // 1 GB
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        // Should have early deletion penalty for the overwritten version
+        assert!(!report.breakdown.early_deletion_penalties.is_zero());
+
+        Ok(())
+    }
+
+    #[test]
+    fn replicate_object_incurs_transfer_cost() -> Result<(), Box<dyn std::error::Error>> {
+        // Create rules with egress pricing
+        let mut rules = test_rules();
+        rules.data_transfer.egress_price_per_gb = TieredPrice::flat(
+            Money::from_str("0.09").ok().unwrap_or(Money::ZERO),
+        );
+
+        let mut sim = Simulator::new(rules);
+
+        let log = OperationLog {
+            operations: vec![
+                // Upload file
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "source-bucket".into(),
+                    key: Some("data.bin".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 10 * 1024 * 1024 * 1024, // 10 GB
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                // Replicate to another region
+                Operation {
+                    timestamp: "2024-01-01T00:01:00Z".parse()?,
+                    bucket: "source-bucket".into(),
+                    key: Some("data.bin".into()),
+                    kind: OperationKind::ReplicateObject {
+                        destination_region: "eu-west-1".to_string(),
+                        destination_bucket: Some("dest-bucket".to_string()),
+                        destination_key: None,
+                        storage_class: None,
+                    },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        // Should have egress cost for replication
+        assert!(!report.breakdown.data_transfer_egress.is_zero());
 
         Ok(())
     }

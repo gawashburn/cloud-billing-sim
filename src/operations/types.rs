@@ -214,6 +214,38 @@ pub enum OperationKind {
         #[serde(default)]
         reason: Option<String>,
     },
+
+    /// Enable or disable versioning on a bucket.
+    SetBucketVersioning {
+        /// Whether versioning is enabled.
+        enabled: bool,
+    },
+
+    /// Delete a specific version of an object.
+    DeleteObjectVersion {
+        /// Version ID to delete.
+        version_id: String,
+    },
+
+    /// Replicate an object to another region.
+    ///
+    /// This represents cross-region replication and incurs data transfer costs.
+    ReplicateObject {
+        /// Destination region.
+        destination_region: String,
+
+        /// Destination bucket (defaults to same bucket name).
+        #[serde(default)]
+        destination_bucket: Option<String>,
+
+        /// Destination key (defaults to same key).
+        #[serde(default)]
+        destination_key: Option<String>,
+
+        /// Storage class for the replica.
+        #[serde(default)]
+        storage_class: Option<StorageClass>,
+    },
 }
 
 fn default_storage_class() -> StorageClass {
