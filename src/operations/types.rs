@@ -204,6 +204,16 @@ pub enum OperationKind {
         #[serde(default)]
         bytes_returned: Option<u64>,
     },
+
+    /// Wait/advance time without performing an operation.
+    ///
+    /// This is used to calculate storage costs for a specific duration.
+    /// The simulator will bill all storage up to this timestamp.
+    Wait {
+        /// Optional description of why the wait was added.
+        #[serde(default)]
+        reason: Option<String>,
+    },
 }
 
 fn default_storage_class() -> StorageClass {
@@ -299,5 +309,66 @@ mod tests {
         let log: OperationLog = serde_json::from_str(json)?;
         assert_eq!(log.operations.len(), 2);
         Ok(())
+    }
+
+    #[test]
+    fn parse_wait_operation() -> Result<(), serde_json::Error> {
+        let json = r#"{
+            "timestamp": "2024-02-15T00:00:00Z",
+            "operation": "wait",
+            "bucket": "_",
+            "reason": "Calculate 30 days of storage costs"
+        }"#;
+
+        let op: Operation = serde_json::from_str(json)?;
+        assert_eq!(op.bucket, "_");
+        assert!(matches!(
+            op.kind,
+            OperationKind::Wait {
+                reason: Some(ref r)
+            } if r == "Calculate 30 days of storage costs"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_wait_operation_no_reason() -> Result<(), serde_json::Error> {
+        let json = r#"{
+            "timestamp": "2024-02-15T00:00:00Z",
+            "operation": "wait",
+            "bucket": "_"
+        }"#;
+
+        let op: Operation = serde_json::from_str(json)?;
+        assert!(matches!(op.kind, OperationKind::Wait { reason: None }));
+        Ok(())
+    }
+
+    #[test]
+    fn time_range_with_wait() {
+        let json = r#"{
+            "operations": [
+                {
+                    "timestamp": "2024-01-01T00:00:00Z",
+                    "operation": "put_object",
+                    "bucket": "my-bucket",
+                    "key": "file.txt",
+                    "size_bytes": 1000
+                },
+                {
+                    "timestamp": "2024-07-01T00:00:00Z",
+                    "operation": "wait",
+                    "bucket": "_",
+                    "reason": "6 months storage"
+                }
+            ]
+        }"#;
+
+        let log: OperationLog = serde_json::from_str(json).expect("parse failed");
+        let (start, end) = log.time_range().expect("time_range failed");
+
+        // Should span 6 months
+        assert_eq!(start.format("%Y-%m-%d").to_string(), "2024-01-01");
+        assert_eq!(end.format("%Y-%m-%d").to_string(), "2024-07-01");
     }
 }

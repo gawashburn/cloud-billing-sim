@@ -147,6 +147,9 @@ impl Simulator {
             } => {
                 self.handle_select_object_content(op, *bytes_scanned, *bytes_returned)?;
             }
+            OperationKind::Wait { reason } => {
+                self.handle_wait(op, reason.as_deref())?;
+            }
         }
 
         Ok(())
@@ -727,6 +730,23 @@ impl Simulator {
         Ok(())
     }
 
+    /// Handles `Wait` operation.
+    ///
+    /// This operation advances time without performing any cloud operation.
+    /// Storage costs are billed up to this timestamp (already done in process_operation).
+    fn handle_wait(&mut self, _op: &Operation, reason: Option<&str>) -> Result<(), EngineError> {
+        if let Some(r) = reason {
+            debug!(reason = %r, "wait");
+        } else {
+            debug!("wait");
+        }
+
+        // No operation cost - storage billing already happened in process_operation
+        self.report.stats.record_operation("WAIT");
+
+        Ok(())
+    }
+
     /// Gets the operation cost for a storage class.
     fn get_operation_cost(
         &self,
@@ -859,6 +879,125 @@ mod tests {
         assert!(!report.total_cost.is_zero());
         assert_eq!(report.stats.objects_created, 1);
         assert_eq!(report.stats.objects_deleted, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn wait_operation_bills_storage() -> Result<(), Box<dyn std::error::Error>> {
+        let rules = test_rules();
+        let mut sim = Simulator::new(rules);
+
+        // Upload 1 GB, then wait 30 days
+        let log = OperationLog {
+            operations: vec![
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("large-file.bin".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 1024 * 1024 * 1024, // 1 GB
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                Operation {
+                    timestamp: "2024-01-31T00:00:00Z".parse()?,
+                    bucket: "_".into(),
+                    key: None,
+                    kind: OperationKind::Wait {
+                        reason: Some("Calculate 30 days storage".to_string()),
+                    },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        // Storage cost for 1 GB for 30 days at $0.023/GB/month = $0.023
+        // (30 days is exactly 1 month in our calculation)
+        assert!(!report.total_cost.is_zero());
+        assert_eq!(report.stats.objects_created, 1);
+        assert_eq!(report.stats.objects_deleted, 0);
+
+        // Verify storage was billed (should be approximately $0.023)
+        let storage_cost = report.breakdown.total_storage;
+        assert!(!storage_cost.is_zero());
+
+        Ok(())
+    }
+
+    #[test]
+    fn wait_operation_with_no_reason() -> Result<(), Box<dyn std::error::Error>> {
+        let rules = test_rules();
+        let mut sim = Simulator::new(rules);
+
+        let log = OperationLog {
+            operations: vec![
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("file.txt".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 1024,
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                Operation {
+                    timestamp: "2024-01-02T00:00:00Z".parse()?,
+                    bucket: "_".into(),
+                    key: None,
+                    kind: OperationKind::Wait { reason: None },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+        assert!(!report.total_cost.is_zero());
+        Ok(())
+    }
+
+    #[test]
+    fn wait_extends_time_range() -> Result<(), Box<dyn std::error::Error>> {
+        let rules = test_rules();
+        let mut sim = Simulator::new(rules);
+
+        // Upload on Jan 1, wait until Jul 1 (6 months)
+        let log = OperationLog {
+            operations: vec![
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("file.bin".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 1024 * 1024 * 1024, // 1 GB
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                Operation {
+                    timestamp: "2024-07-01T00:00:00Z".parse()?,
+                    bucket: "_".into(),
+                    key: None,
+                    kind: OperationKind::Wait {
+                        reason: Some("6 months of storage".to_string()),
+                    },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        // 6 months of storage for 1 GB at $0.023/GB/month ≈ $0.138
+        // (182 days / 30 days per month ≈ 6.07 months)
+        let storage_cost = report.breakdown.total_storage;
+        assert!(!storage_cost.is_zero());
+
+        // Verify time range was extended
+        let (start, end) = report.time_range.expect("time_range should be set");
+        assert_eq!(start.format("%Y-%m-%d").to_string(), "2024-01-01");
+        assert_eq!(end.format("%Y-%m-%d").to_string(), "2024-07-01");
+
         Ok(())
     }
 }

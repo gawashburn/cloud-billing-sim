@@ -347,6 +347,50 @@ Query object content using SQL-like expressions.
 
 ---
 
+### `wait`
+
+Advance time without performing any cloud operation. This is used to calculate storage costs for a specific duration after uploading objects.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `reason` | String | No | — | Optional description of why the wait was added |
+
+**Note:** The `bucket` field is required for format consistency but is ignored for wait operations. Use any value (e.g., `"_"`).
+
+**Example:**
+```json
+{
+  "timestamp": "2024-02-15T00:00:00Z",
+  "operation": "wait",
+  "bucket": "_",
+  "reason": "Calculate 30 days of storage costs"
+}
+```
+
+**Use case:** Calculate storage costs for objects held for 6 months:
+```json
+{
+  "operations": [
+    {
+      "timestamp": "2024-01-01T00:00:00Z",
+      "operation": "put_object",
+      "bucket": "my-bucket",
+      "key": "large-archive.tar",
+      "size_bytes": 107374182400,
+      "storage_class": "GLACIER_DEEP_ARCHIVE"
+    },
+    {
+      "timestamp": "2024-07-01T00:00:00Z",
+      "operation": "wait",
+      "bucket": "_",
+      "reason": "Calculate 6 months of storage costs"
+    }
+  ]
+}
+```
+
+---
+
 ## Complete Example
 
 ```json
