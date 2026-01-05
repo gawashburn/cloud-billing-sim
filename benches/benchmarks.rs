@@ -164,19 +164,19 @@ fn bench_parse_operations(c: &mut Criterion) {
     });
 }
 
-fn bench_parse_operations_large(c: &mut Criterion) {
-    // Generate a large JSON with many operations
-    let ops: Vec<String> = (0..1000)
+fn generate_operations_json(count: usize) -> String {
+    let ops: Vec<String> = (0..count)
         .map(|i| {
             format!(
                 r#"{{
-                "timestamp": "2024-01-01T{:02}:{:02}:00Z",
+                "timestamp": "2024-01-{:02}T{:02}:{:02}:00Z",
                 "operation": "put_object",
                 "bucket": "test-bucket",
                 "key": "file{}.txt",
                 "size_bytes": {}
             }}"#,
-                i / 60,
+                (i / 1440) % 28 + 1,
+                (i / 60) % 24,
                 i % 60,
                 i,
                 1024 * (i + 1)
@@ -184,14 +184,20 @@ fn bench_parse_operations_large(c: &mut Criterion) {
         })
         .collect();
 
-    let json = format!(r#"{{"operations": [{}]}}"#, ops.join(","));
+    format!(r#"{{"operations": [{}]}}"#, ops.join(","))
+}
 
+fn bench_parse_operations_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_operations");
-    group.throughput(Throughput::Elements(1000));
 
-    group.bench_function("1000_ops", |b| {
-        b.iter(|| operations::parse_operations(black_box(&json)))
-    });
+    for size in [100, 500, 1000, 5000, 10000].iter() {
+        let json = generate_operations_json(*size);
+        group.throughput(Throughput::Elements(*size as u64));
+
+        group.bench_with_input(BenchmarkId::from_parameter(size), &json, |b, json| {
+            b.iter(|| operations::parse_operations(black_box(json)))
+        });
+    }
 
     group.finish();
 }
@@ -226,7 +232,7 @@ fn bench_simulate_scaling(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("simulate");
 
-    for size in [10, 100, 1000].iter() {
+    for size in [10, 50, 100, 500, 1000, 5000, 10000].iter() {
         let log = generate_operations(*size);
         group.throughput(Throughput::Elements(*size as u64));
 
@@ -406,7 +412,7 @@ fn bench_egress_calculation(c: &mut Criterion) {
 criterion_group!(
     parsing,
     bench_parse_operations,
-    bench_parse_operations_large,
+    bench_parse_operations_scaling,
     bench_parse_rules,
 );
 
