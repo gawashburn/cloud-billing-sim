@@ -62,3 +62,57 @@ pub fn load_rules(path: impl AsRef<Path>) -> Result<PricingRules, PricingError> 
 pub fn parse_rules(toml_content: &str) -> Result<PricingRules, PricingError> {
     toml::from_str(toml_content).map_err(PricingError::Parse)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_rules_valid_toml() {
+        let toml = r#"
+            [provider]
+            name = "test-provider"
+            currency = "USD"
+
+            [storage_classes.STANDARD]
+            storage_price_per_gb_month = "0.023"
+
+            [operations.DEFAULT]
+            put_per_1000 = "0.005"
+            get_per_1000 = "0.0004"
+
+            [data_transfer]
+            ingress_price_per_gb = "0"
+            egress_price_per_gb = "0.09"
+        "#;
+
+        let rules = parse_rules(toml).expect("should parse valid TOML");
+        assert_eq!(rules.provider.name, "test-provider");
+        assert!(rules.storage_classes.contains_key("STANDARD"));
+    }
+
+    #[test]
+    fn parse_rules_invalid_toml() {
+        let toml = "not valid toml [[[";
+        let result = parse_rules(toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_rules_minimal() {
+        let toml = r#"
+            [provider]
+            name = "minimal"
+
+            [storage_classes.STANDARD]
+            storage_price_per_gb_month = "0.01"
+
+            [operations.DEFAULT]
+
+            [data_transfer]
+        "#;
+
+        let rules = parse_rules(toml).expect("should parse minimal config");
+        assert_eq!(rules.provider.name, "minimal");
+    }
+}
