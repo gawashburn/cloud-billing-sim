@@ -10,6 +10,13 @@ repository = "https://github.com/geoffw/cloud-billing-sim"
 keywords = ["cloud", "s3", "billing", "simulator"]
 categories = ["command-line-utilities", "simulation"]
 
+[features]
+default = []
+s3-validation = ["dep:aws-sdk-s3", "dep:aws-sdk-pricing", "dep:aws-config", "dep:tokio"]
+b2-validation = ["dep:reqwest", "dep:tokio"]
+r2-validation = ["dep:aws-sdk-s3", "dep:aws-config", "dep:tokio"]
+azure-validation = ["dep:azure_storage_blobs", "dep:azure_storage", "dep:azure_identity", "dep:tokio", "dep:futures", "dep:url"]
+
 [dependencies]
 thiserror = "1"
 serde = { version = "1", features = ["derive"] }
@@ -20,10 +27,26 @@ rust_decimal = { version = "1", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+mutants = "0.0.3"
+
+# Optional dependencies for cloud validation
+aws-sdk-s3 = { version = "1", optional = true }
+aws-sdk-pricing = { version = "1", optional = true }
+aws-config = { version = "1", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
+reqwest = { version = "0.12", features = ["json"], optional = true }
+
+# Azure SDK dependencies
+azure_storage_blobs = { version = "0.21", optional = true }
+azure_storage = { version = "0.21", optional = true }
+azure_identity = { version = "0.21", optional = true }
+futures = { version = "0.3", optional = true }
+url = { version = "2", optional = true }
 
 [dev-dependencies]
 proptest = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
+tracing-test = "0.2"
 
 [[bench]]
 name = "benchmarks"
@@ -31,6 +54,8 @@ harness = false
 
 [lints.rust]
 unsafe_code = "forbid"
+# Allow kani cfg for formal verification
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 [lints.clippy]
 all = "warn"

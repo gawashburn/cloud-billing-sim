@@ -1,0 +1,94 @@
+# Cloudflare R2 Storage Pricing Rules
+# Based on https://developers.cloudflare.com/r2/pricing/ as of January 2024
+# Key advantage: Zero egress fees!
+
+[provider]
+name = "cloudflare-r2"
+version = "2024-01"
+currency = "USD"
+
+# =============================================================================
+# Storage Classes
+# =============================================================================
+
+# R2 has a single storage class
+[storage_classes.STANDARD]
+# $0.015 per GB-month
+storage_price_per_gb_month = "0.015"
+# No minimum object size
+# No minimum storage duration
+
+# Infrequent Access class (announced late 2023)
+[storage_classes.INFREQUENT_ACCESS]
+# $0.01 per GB-month
+storage_price_per_gb_month = "0.01"
+min_storage_duration_days = 30
+# Retrieval fee: $0.01 per GB retrieved
+retrieval_price_per_gb = "0.01"
+
+# =============================================================================
+# Operations Pricing
+# =============================================================================
+
+[operations.DEFAULT]
+# Class A operations: $4.50 per million = $0.0045 per 1,000
+# Includes: PutObject, CopyObject, ListObjects, CreateMultipartUpload, etc.
+put_per_1000 = "0.0045"
+list_per_1000 = "0.0045"
+copy_per_1000 = "0.0045"
+
+# Class B operations: $0.36 per million = $0.00036 per 1,000
+# Includes: HeadObject, GetObject
+get_per_1000 = "0.00036"
+head_per_1000 = "0.00036"
+
+# Free operations
+delete_per_1000 = "0"
+
+# No lifecycle transition charges (R2 handles this differently)
+lifecycle_transition_per_1000 = "0"
+
+[operations.INFREQUENT_ACCESS]
+# Same operation pricing as STANDARD
+put_per_1000 = "0.0045"
+list_per_1000 = "0.0045"
+copy_per_1000 = "0.0045"
+get_per_1000 = "0.00036"
+head_per_1000 = "0.00036"
+delete_per_1000 = "0"
+lifecycle_transition_per_1000 = "0"
+
+# =============================================================================
+# Data Transfer
+# =============================================================================
+
+[data_transfer]
+# Ingress is FREE
+ingress_price_per_gb = "0"
+
+# EGRESS IS FREE - R2's main advantage!
+# No charges for data transfer to the internet
+egress_price_per_gb = "0"
+
+# Free tier allowances (per month):
+# - 10 GB storage (not modeled here)
+# - 1 million Class A operations (not modeled here)
+# - 10 million Class B operations (not modeled here)
+
+# =============================================================================
+# Additional Notes
+# =============================================================================
+
+# R2 supports:
+# - S3-compatible API
+# - Jurisdictional restrictions (EU data residency)
+# - Event notifications
+# - Object lifecycle policies
+# - Multipart uploads
+# - Pre-signed URLs
+# - CORS configuration
+
+# R2 does NOT have:
+# - Complex storage class tiers like S3 Glacier
+# - Requester pays buckets
+# - Cross-region replication (uses Cloudflare's global network instead)

@@ -18,7 +18,7 @@ pub struct OperationLog {
 impl OperationLog {
     /// Creates a new empty operation log.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             operations: Vec::new(),
             metadata: None,
@@ -83,10 +83,10 @@ impl Operation {
     /// Returns a display name for the object.
     #[must_use]
     pub fn object_path(&self) -> String {
-        match &self.key {
-            Some(key) => format!("{}/{}", self.bucket, key),
-            None => self.bucket.clone(),
-        }
+        self.key.as_ref().map_or_else(
+            || self.bucket.clone(),
+            |key| format!("{}/{}", self.bucket, key),
+        )
     }
 }
 
@@ -204,6 +204,48 @@ pub enum OperationKind {
         #[serde(default)]
         bytes_returned: Option<u64>,
     },
+
+    /// Wait/advance time without performing an operation.
+    ///
+    /// This is used to calculate storage costs for a specific duration.
+    /// The simulator will bill all storage up to this timestamp.
+    Wait {
+        /// Optional description of why the wait was added.
+        #[serde(default)]
+        reason: Option<String>,
+    },
+
+    /// Enable or disable versioning on a bucket.
+    SetBucketVersioning {
+        /// Whether versioning is enabled.
+        enabled: bool,
+    },
+
+    /// Delete a specific version of an object.
+    DeleteObjectVersion {
+        /// Version ID to delete.
+        version_id: String,
+    },
+
+    /// Replicate an object to another region.
+    ///
+    /// This represents cross-region replication and incurs data transfer costs.
+    ReplicateObject {
+        /// Destination region.
+        destination_region: String,
+
+        /// Destination bucket (defaults to same bucket name).
+        #[serde(default)]
+        destination_bucket: Option<String>,
+
+        /// Destination key (defaults to same key).
+        #[serde(default)]
+        destination_key: Option<String>,
+
+        /// Storage class for the replica.
+        #[serde(default)]
+        storage_class: Option<StorageClass>,
+    },
 }
 
 fn default_storage_class() -> StorageClass {
@@ -225,7 +267,7 @@ pub enum RetrievalSpeed {
 impl RetrievalSpeed {
     /// Returns the tier name as a string.
     #[must_use]
-    pub const fn as_str(&self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Expedited => "expedited",
             Self::Standard => "standard",
@@ -239,7 +281,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_put_object() {
+    fn parse_put_object() -> Result<(), serde_json::Error> {
         let json = r#"{
             "timestamp": "2024-01-15T10:30:00Z",
             "operation": "put_object",
@@ -249,13 +291,14 @@ mod tests {
             "storage_class": "STANDARD"
         }"#;
 
-        let op: Operation = serde_json::from_str(json).expect("should parse");
+        let op: Operation = serde_json::from_str(json)?;
         assert_eq!(op.bucket, "my-bucket");
         assert!(matches!(op.kind, OperationKind::PutObject { .. }));
+        Ok(())
     }
 
     #[test]
-    fn parse_get_object() {
+    fn parse_get_object() -> Result<(), serde_json::Error> {
         let json = r#"{
             "timestamp": "2024-01-15T11:00:00Z",
             "operation": "get_object",
@@ -264,18 +307,19 @@ mod tests {
             "bytes_transferred": 1048576
         }"#;
 
-        let op: Operation = serde_json::from_str(json).expect("should parse");
+        let op: Operation = serde_json::from_str(json)?;
         assert!(matches!(
             op.kind,
             OperationKind::GetObject {
-                bytes_transferred: Some(1048576),
+                bytes_transferred: Some(1_048_576),
                 ..
             }
         ));
+        Ok(())
     }
 
     #[test]
-    fn parse_operation_log() {
+    fn parse_operation_log() -> Result<(), serde_json::Error> {
         let json = r#"{
             "operations": [
                 {
@@ -294,7 +338,69 @@ mod tests {
             ]
         }"#;
 
-        let log: OperationLog = serde_json::from_str(json).expect("should parse");
+        let log: OperationLog = serde_json::from_str(json)?;
         assert_eq!(log.operations.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_wait_operation() -> Result<(), serde_json::Error> {
+        let json = r#"{
+            "timestamp": "2024-02-15T00:00:00Z",
+            "operation": "wait",
+            "bucket": "_",
+            "reason": "Calculate 30 days of storage costs"
+        }"#;
+
+        let op: Operation = serde_json::from_str(json)?;
+        assert_eq!(op.bucket, "_");
+        assert!(matches!(
+            op.kind,
+            OperationKind::Wait {
+                reason: Some(ref r)
+            } if r == "Calculate 30 days of storage costs"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_wait_operation_no_reason() -> Result<(), serde_json::Error> {
+        let json = r#"{
+            "timestamp": "2024-02-15T00:00:00Z",
+            "operation": "wait",
+            "bucket": "_"
+        }"#;
+
+        let op: Operation = serde_json::from_str(json)?;
+        assert!(matches!(op.kind, OperationKind::Wait { reason: None }));
+        Ok(())
+    }
+
+    #[test]
+    fn time_range_with_wait() {
+        let json = r#"{
+            "operations": [
+                {
+                    "timestamp": "2024-01-01T00:00:00Z",
+                    "operation": "put_object",
+                    "bucket": "my-bucket",
+                    "key": "file.txt",
+                    "size_bytes": 1000
+                },
+                {
+                    "timestamp": "2024-07-01T00:00:00Z",
+                    "operation": "wait",
+                    "bucket": "_",
+                    "reason": "6 months storage"
+                }
+            ]
+        }"#;
+
+        let log: OperationLog = serde_json::from_str(json).expect("parse failed");
+        let (start, end) = log.time_range().expect("time_range failed");
+
+        // Should span 6 months
+        assert_eq!(start.format("%Y-%m-%d").to_string(), "2024-01-01");
+        assert_eq!(end.format("%Y-%m-%d").to_string(), "2024-07-01");
     }
 }

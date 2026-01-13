@@ -69,7 +69,7 @@ impl Bytes {
 
     /// Returns the raw byte count.
     #[must_use]
-    pub const fn as_bytes(&self) -> u64 {
+    pub const fn as_bytes(self) -> u64 {
         self.0
     }
 
@@ -78,23 +78,27 @@ impl Bytes {
     /// Cloud providers typically price storage per GB-month, so this
     /// provides precise fractional GB values.
     #[must_use]
-    pub fn as_gb_decimal(&self) -> Decimal {
+    pub fn as_gb_decimal(self) -> Decimal {
         Decimal::from(self.0) / Decimal::from(Self::GB)
     }
 
     /// Returns the size in terabytes as a decimal.
     #[must_use]
-    pub fn as_tb_decimal(&self) -> Decimal {
+    pub fn as_tb_decimal(self) -> Decimal {
         Decimal::from(self.0) / Decimal::from(Self::TB)
     }
 
     /// Returns true if this is zero bytes.
     #[must_use]
-    pub const fn is_zero(&self) -> bool {
+    pub const fn is_zero(self) -> bool {
         self.0 == 0
     }
 
     /// Returns the maximum of this value and another.
+    // MUTANTS EXCLUSION: The mutation `> to >=` is an equivalent mutant.
+    // When self == other, returning either value gives the same result since
+    // both have identical byte counts. Tested by bytes_max_returns_correct_value.
+    #[mutants::skip]
     #[must_use]
     pub const fn max(self, other: Self) -> Self {
         if self.0 > other.0 {
@@ -176,9 +180,60 @@ mod tests {
     }
 
     #[test]
-    fn display_formats_appropriately() {
+    fn display_formats_bytes() {
+        assert_eq!(format!("{}", Bytes::new(0)), "0 B");
         assert_eq!(format!("{}", Bytes::new(500)), "500 B");
+        assert_eq!(format!("{}", Bytes::new(1023)), "1023 B");
+    }
+
+    #[test]
+    fn display_formats_kilobytes() {
         assert_eq!(format!("{}", Bytes::from_kb(1)), "1.00 KB");
+        assert_eq!(format!("{}", Bytes::new(1536)), "1.50 KB"); // 1.5 KB
+        assert_eq!(format!("{}", Bytes::from_kb(512)), "512.00 KB");
+    }
+
+    #[test]
+    fn display_formats_megabytes() {
+        assert_eq!(format!("{}", Bytes::from_mb(1)), "1.00 MB");
+        assert_eq!(format!("{}", Bytes::from_mb(256)), "256.00 MB");
+        assert_eq!(format!("{}", Bytes::from_kb(1536)), "1.50 MB"); // 1.5 MB
+    }
+
+    #[test]
+    fn display_formats_gigabytes() {
+        assert_eq!(format!("{}", Bytes::from_gb(1)), "1.00 GB");
         assert_eq!(format!("{}", Bytes::from_gb(5)), "5.00 GB");
+        assert_eq!(format!("{}", Bytes::from_mb(1536)), "1.50 GB"); // 1.5 GB
+    }
+
+    #[test]
+    fn display_formats_terabytes() {
+        assert_eq!(format!("{}", Bytes::from_tb(1)), "1.00 TB");
+        assert_eq!(format!("{}", Bytes::from_tb(10)), "10.00 TB");
+        assert_eq!(format!("{}", Bytes::from_gb(1536)), "1.50 TB"); // 1.5 TB
+    }
+
+    #[test]
+    fn saturating_sub_prevents_underflow() {
+        let a = Bytes::new(100);
+        let b = Bytes::new(150);
+        assert_eq!(a.saturating_sub(b), Bytes::ZERO);
+
+        let c = Bytes::from_mb(10);
+        let d = Bytes::from_mb(3);
+        assert_eq!(c.saturating_sub(d), Bytes::from_mb(7));
+    }
+
+    #[test]
+    fn new_creates_bytes() {
+        let b = Bytes::new(12345);
+        assert_eq!(b.as_bytes(), 12345);
+    }
+
+    #[test]
+    fn zero_constant() {
+        assert!(Bytes::ZERO.is_zero());
+        assert_eq!(Bytes::ZERO.as_bytes(), 0);
     }
 }

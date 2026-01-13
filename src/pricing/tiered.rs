@@ -3,6 +3,7 @@
 use crate::types::Money;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer, Serialize};
+use std::str::FromStr;
 
 /// A price tier with an optional upper bound.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +36,7 @@ where
 /// use cloud_billing_sim::pricing::TieredPrice;
 /// use cloud_billing_sim::types::Money;
 /// use rust_decimal::Decimal;
+/// use std::str::FromStr;
 ///
 /// let flat = TieredPrice::flat(Money::from_str("0.023").unwrap());
 /// let cost = flat.calculate_cost(Decimal::from(1000)); // 1000 GB
@@ -66,7 +68,7 @@ impl TieredPrice {
 
     /// Creates a tiered price from a list of tiers.
     #[must_use]
-    pub fn tiered(tiers: Vec<PriceTier>) -> Self {
+    pub const fn tiered(tiers: Vec<PriceTier>) -> Self {
         Self::Tiered(tiers)
     }
 
@@ -88,7 +90,7 @@ impl TieredPrice {
                         break;
                     }
 
-                    let tier_limit = tier.up_to_gb.map(Decimal::from).unwrap_or(Decimal::MAX);
+                    let tier_limit = tier.up_to_gb.map_or(Decimal::MAX, Decimal::from);
                     let tier_size = tier_limit - prev_threshold;
                     let usage_in_tier = remaining.min(tier_size);
 
@@ -130,7 +132,7 @@ impl<'de> Deserialize<'de> for TieredPrice {
             RawTieredPrice::Flat(s) => Money::from_str(&s)
                 .map(TieredPrice::Flat)
                 .map_err(D::Error::custom),
-            RawTieredPrice::Tiered(tiers) => Ok(TieredPrice::Tiered(tiers)),
+            RawTieredPrice::Tiered(tiers) => Ok(Self::Tiered(tiers)),
         }
     }
 }
@@ -142,6 +144,7 @@ impl Default for TieredPrice {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_statements, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -187,5 +190,53 @@ mod tests {
         // 30 GB: 30 @ $0.10 = $3.00
         let cost = price.calculate_cost(Decimal::from(30));
         assert_eq!(cost, Money::from_str("3.00").ok().unwrap_or(Money::ZERO));
+    }
+
+    #[test]
+    fn deserialize_flat_price_from_toml() {
+        let toml_str = r#"price = "0.023""#;
+        #[derive(serde::Deserialize)]
+        struct Config {
+            price: TieredPrice,
+        }
+        let config: Config = toml::from_str(toml_str).expect("Failed to parse TOML");
+        let expected = Money::from_str("0.023").ok().unwrap_or(Money::ZERO);
+        assert_eq!(config.price.base_price(), expected);
+    }
+
+    #[test]
+    fn deserialize_tiered_price_from_toml() {
+        let toml_str = r#"
+[[price]]
+up_to_gb = 50
+price = "0.10"
+
+[[price]]
+price = "0.05"
+"#;
+        #[derive(serde::Deserialize)]
+        struct Config {
+            price: TieredPrice,
+        }
+        let config: Config = toml::from_str(toml_str).expect("Failed to parse TOML");
+        // Should have tiered pricing with first tier at $0.10
+        let expected_base = Money::from_str("0.10").ok().unwrap_or(Money::ZERO);
+        assert_eq!(config.price.base_price(), expected_base);
+
+        // Calculate cost to verify tiers work
+        let cost = config.price.calculate_cost(Decimal::from(100));
+        // 50 @ $0.10 + 50 @ $0.05 = $5.00 + $2.50 = $7.50
+        assert_eq!(cost, Money::from_str("7.50").ok().unwrap_or(Money::ZERO));
+    }
+
+    #[test]
+    fn deserialize_price_tier_from_json() {
+        let json_str = r#"{"up_to_gb": 100, "price": "0.05"}"#;
+        let tier: PriceTier = serde_json::from_str(json_str).expect("Failed to parse JSON");
+        assert_eq!(tier.up_to_gb, Some(100));
+        assert_eq!(
+            tier.price,
+            Money::from_str("0.05").ok().unwrap_or(Money::ZERO)
+        );
     }
 }

@@ -147,6 +147,29 @@ impl Simulator {
             } => {
                 self.handle_select_object_content(op, *bytes_scanned, *bytes_returned)?;
             }
+            OperationKind::Wait { reason } => {
+                self.handle_wait(op, reason.as_deref())?;
+            }
+            OperationKind::SetBucketVersioning { enabled } => {
+                self.handle_set_bucket_versioning(op, *enabled)?;
+            }
+            OperationKind::DeleteObjectVersion { version_id } => {
+                self.handle_delete_object_version(op, version_id)?;
+            }
+            OperationKind::ReplicateObject {
+                destination_region,
+                destination_bucket,
+                destination_key,
+                storage_class,
+            } => {
+                self.handle_replicate_object(
+                    op,
+                    destination_region,
+                    destination_bucket.as_deref(),
+                    destination_key.as_deref(),
+                    storage_class.as_ref(),
+                )?;
+            }
         }
 
         Ok(())
@@ -170,6 +193,17 @@ impl Simulator {
 
     /// Bills storage costs up to a given timestamp.
     fn bill_storage_to(&mut self, timestamp: DateTime<Utc>) -> Result<(), EngineError> {
+        // Bill current objects
+        self.bill_current_objects_to(timestamp)?;
+
+        // Bill noncurrent versions
+        self.bill_noncurrent_versions_to(timestamp)?;
+
+        Ok(())
+    }
+
+    /// Bills storage costs for current objects up to a given timestamp.
+    fn bill_current_objects_to(&mut self, timestamp: DateTime<Utc>) -> Result<(), EngineError> {
         // Collect objects that need billing
         let objects_to_bill: Vec<_> = self
             .state
@@ -215,7 +249,70 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles PutObject operation.
+    /// Bills storage costs for noncurrent versions up to a given timestamp.
+    fn bill_noncurrent_versions_to(&mut self, timestamp: DateTime<Utc>) -> Result<(), EngineError> {
+        // Collect noncurrent versions that need billing
+        let versions_to_bill: Vec<_> = self
+            .state
+            .all_noncurrent_versions()
+            .filter(|(_, v)| v.last_billed_at < timestamp)
+            .map(|(key, v)| (key.clone(), v.clone()))
+            .collect();
+
+        for (key, version) in &versions_to_bill {
+            let duration = timestamp.signed_duration_since(version.last_billed_at);
+            let fraction = duration_to_month_fraction(duration);
+
+            if fraction > Decimal::ZERO {
+                let class_rules = self
+                    .rules
+                    .get_storage_class(&version.storage_class)
+                    .ok_or_else(|| {
+                        EngineError::UnknownStorageClass(version.storage_class.to_string())
+                    })?;
+
+                let cost = class_rules.calculate_storage_cost(version.size, fraction);
+
+                trace!(
+                    object = %key,
+                    version_id = %version.version_id,
+                    class = %version.storage_class,
+                    size = %version.size,
+                    duration_hours = duration.num_hours(),
+                    cost = %cost,
+                    "billing noncurrent version storage"
+                );
+
+                self.report.add_storage_cost(&version.storage_class, cost);
+                self.report.record_object_cost(
+                    &format!("{}@{}", key, version.version_id),
+                    "noncurrent_storage",
+                    cost,
+                );
+            }
+        }
+
+        // Update last_billed_at for noncurrent versions
+        // We need to do this separately to avoid borrow issues
+        for (key, version) in versions_to_bill {
+            // Find and update the version
+            let versions = self.state.get_noncurrent_versions(&key.bucket, &key.key);
+            if let Some(pos) = versions.iter().position(|v| v.version_id == version.version_id) {
+                // We need mutable access - get through the internal iterator
+                for (k, v) in self.state.noncurrent_versions_mut() {
+                    if k.bucket == key.bucket && k.key == key.key && v.version_id == version.version_id {
+                        v.last_billed_at = timestamp;
+                        break;
+                    }
+                }
+                let _ = pos; // Silence unused warning
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handles `PutObject` operation.
     fn handle_put_object(
         &mut self,
         op: &Operation,
@@ -275,7 +372,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles GetObject operation.
+    /// Handles `GetObject` operation.
     fn handle_get_object(
         &mut self,
         op: &Operation,
@@ -327,7 +424,8 @@ impl Simulator {
             .state
             .total_storage_by_class()
             .values()
-            .map(|b| b.as_gb_decimal())
+            .copied()
+            .map(Bytes::as_gb_decimal)
             .sum();
 
         let egress_cost = self
@@ -351,7 +449,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles DeleteObject operation.
+    /// Handles `DeleteObject` operation.
     fn handle_delete_object(&mut self, op: &Operation) -> Result<(), EngineError> {
         let key = op
             .key
@@ -398,7 +496,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles CopyObject operation.
+    /// Handles `CopyObject` operation.
     fn handle_copy_object(
         &mut self,
         op: &Operation,
@@ -446,7 +544,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles ListObjects operation.
+    /// Handles `ListObjects` operation.
     fn handle_list_objects(
         &mut self,
         op: &Operation,
@@ -463,7 +561,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles HeadObject operation.
+    /// Handles `HeadObject` operation.
     fn handle_head_object(&mut self, op: &Operation) -> Result<(), EngineError> {
         let key = op
             .key
@@ -487,7 +585,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles CreateMultipartUpload.
+    /// Handles `CreateMultipartUpload`.
     fn handle_create_multipart_upload(
         &mut self,
         op: &Operation,
@@ -515,7 +613,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles UploadPart.
+    /// Handles `UploadPart`.
     fn handle_upload_part(
         &mut self,
         op: &Operation,
@@ -530,8 +628,7 @@ impl Simulator {
             .add_part(upload_id, part_number, Bytes::new(size_bytes), op.timestamp)
         {
             return Err(EngineError::InvalidSequence(format!(
-                "Unknown multipart upload: {}",
-                upload_id
+                "Unknown multipart upload: {upload_id}"
             )));
         }
 
@@ -545,7 +642,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles CompleteMultipartUpload.
+    /// Handles `CompleteMultipartUpload`.
     fn handle_complete_multipart_upload(
         &mut self,
         op: &Operation,
@@ -558,7 +655,7 @@ impl Simulator {
             .state
             .complete_multipart_upload(upload_id, op.timestamp)
             .ok_or_else(|| {
-                EngineError::InvalidSequence(format!("Unknown multipart upload: {}", upload_id))
+                EngineError::InvalidSequence(format!("Unknown multipart upload: {upload_id}"))
             })?;
 
         self.report
@@ -579,7 +676,8 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles AbortMultipartUpload.
+    /// Handles `AbortMultipartUpload`.
+    #[allow(clippy::unnecessary_wraps)] // Consistent with other handlers
     fn handle_abort_multipart_upload(
         &mut self,
         _op: &Operation,
@@ -596,7 +694,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles RestoreObject (for Glacier).
+    /// Handles `RestoreObject` (for Glacier).
     fn handle_restore_object(
         &mut self,
         op: &Operation,
@@ -648,7 +746,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles LifecycleTransition.
+    /// Handles `LifecycleTransition`.
     fn handle_lifecycle_transition(
         &mut self,
         op: &Operation,
@@ -687,7 +785,7 @@ impl Simulator {
         Ok(())
     }
 
-    /// Handles SelectObjectContent.
+    /// Handles `SelectObjectContent`.
     fn handle_select_object_content(
         &mut self,
         op: &Operation,
@@ -726,6 +824,165 @@ impl Simulator {
         Ok(())
     }
 
+    /// Handles `Wait` operation.
+    ///
+    /// This operation advances time without performing any cloud operation.
+    /// Storage costs are billed up to this timestamp (already done in process_operation).
+    fn handle_wait(&mut self, _op: &Operation, reason: Option<&str>) -> Result<(), EngineError> {
+        if let Some(r) = reason {
+            debug!(reason = %r, "wait");
+        } else {
+            debug!("wait");
+        }
+
+        // No operation cost - storage billing already happened in process_operation
+        self.report.stats.record_operation("WAIT");
+
+        Ok(())
+    }
+
+    /// Handles `SetBucketVersioning` operation.
+    fn handle_set_bucket_versioning(
+        &mut self,
+        op: &Operation,
+        enabled: bool,
+    ) -> Result<(), EngineError> {
+        debug!(bucket = %op.bucket, enabled, "set bucket versioning");
+
+        self.state.set_versioning(&op.bucket, enabled);
+        self.report.stats.record_operation("SET_BUCKET_VERSIONING");
+
+        Ok(())
+    }
+
+    /// Handles `DeleteObjectVersion` operation.
+    fn handle_delete_object_version(
+        &mut self,
+        op: &Operation,
+        version_id: &str,
+    ) -> Result<(), EngineError> {
+        let key = op
+            .key
+            .as_deref()
+            .ok_or_else(|| EngineError::InvalidSequence("DeleteObjectVersion requires key".to_string()))?;
+
+        debug!(version_id, "delete object version");
+
+        let removed = self.state.delete_version(&op.bucket, key, version_id);
+
+        if let Some(version) = removed {
+            // Check for early deletion penalty
+            let days_stored = {
+                let duration = op.timestamp.signed_duration_since(version.created_at);
+                duration.num_days().try_into().unwrap_or(0)
+            };
+
+            if let Some(class_rules) = self.rules.get_storage_class(&version.storage_class) {
+                let penalty = class_rules.early_deletion_cost(version.size, days_stored);
+                if !penalty.is_zero() {
+                    debug!(penalty = %penalty, "early deletion penalty for version");
+                    self.report.add_early_deletion_penalty(penalty);
+                    self.report.record_object_cost(
+                        &format!("{}@{}", op.object_path(), version_id),
+                        "early_deletion",
+                        penalty,
+                    );
+                }
+            }
+
+            // Delete operations are typically free
+            self.report.stats.record_operation("DELETE_VERSION");
+        } else {
+            warn!(version_id, "version not found for deletion");
+        }
+
+        Ok(())
+    }
+
+    /// Handles `ReplicateObject` operation.
+    ///
+    /// Cross-region replication incurs:
+    /// - Data transfer costs (egress from source region)
+    /// - PUT operation cost in destination
+    fn handle_replicate_object(
+        &mut self,
+        op: &Operation,
+        destination_region: &str,
+        destination_bucket: Option<&str>,
+        destination_key: Option<&str>,
+        storage_class: Option<&StorageClass>,
+    ) -> Result<(), EngineError> {
+        let key = op
+            .key
+            .as_deref()
+            .ok_or_else(|| EngineError::InvalidSequence("ReplicateObject requires key".to_string()))?;
+
+        let obj = self
+            .state
+            .get_object(&op.bucket, key)
+            .ok_or_else(|| EngineError::UnknownObject {
+                bucket: op.bucket.clone(),
+                key: key.to_string(),
+            })?
+            .clone();
+
+        let dest_bucket = destination_bucket.unwrap_or(&op.bucket);
+        let dest_key = destination_key.unwrap_or(key);
+        let dest_class = storage_class.cloned().unwrap_or_else(|| obj.storage_class.clone());
+
+        debug!(
+            source = %op.object_path(),
+            destination_region,
+            dest_bucket,
+            dest_key,
+            class = %dest_class,
+            size = %obj.size,
+            "replicate object"
+        );
+
+        // Data transfer cost (cross-region egress)
+        // For simplicity, we use the standard egress pricing
+        // A more complete implementation would use region-pair specific pricing
+        let egress_gb = obj.size.as_gb_decimal();
+        self.monthly_egress_gb += egress_gb;
+
+        let storage_gb: Decimal = self
+            .state
+            .total_storage_by_class()
+            .values()
+            .map(|b| b.as_gb_decimal())
+            .sum();
+
+        let egress_cost = self
+            .rules
+            .data_transfer
+            .calculate_egress_cost(self.monthly_egress_gb, storage_gb);
+
+        // Calculate incremental egress cost
+        if !egress_cost.is_zero() {
+            let incremental = self
+                .rules
+                .data_transfer
+                .egress_price_per_gb
+                .calculate_cost(egress_gb);
+            self.report.add_egress_cost(incremental);
+            self.report
+                .record_object_cost(&op.object_path(), "replication_transfer", incremental);
+        }
+
+        // PUT operation cost for the replica
+        let put_cost = self.get_operation_cost(&dest_class, OperationType::Put)?;
+        self.report.add_operation_cost("PUT", put_cost);
+
+        // Create the replica object (in a separate "region" conceptually)
+        // Note: In a more complete implementation, we'd track objects per region
+        // For now, we just record the stats
+        self.report.stats.record_operation("REPLICATE");
+        self.report.stats.record_upload(obj.size);
+
+        Ok(())
+    }
+
     /// Gets the operation cost for a storage class.
     fn get_operation_cost(
         &self,
@@ -742,13 +999,13 @@ impl Simulator {
 
     /// Returns the current cost report.
     #[must_use]
-    pub fn report(&self) -> &CostReport {
+    pub const fn report(&self) -> &CostReport {
         &self.report
     }
 
     /// Returns the current storage state.
     #[must_use]
-    pub fn state(&self) -> &StorageState {
+    pub const fn state(&self) -> &StorageState {
         &self.state
     }
 
@@ -769,8 +1026,9 @@ fn duration_to_month_fraction(duration: Duration) -> Decimal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pricing::{OperationRules, StorageClassRules, TieredPrice};
+    use crate::pricing::{DataTransferRules, OperationRules, StorageClassRules, TieredPrice};
     use std::collections::HashMap;
+    use std::str::FromStr;
 
     fn test_rules() -> PricingRules {
         let mut storage_classes = HashMap::new();
@@ -812,20 +1070,20 @@ mod tests {
             },
             storage_classes,
             operations,
-            data_transfer: Default::default(),
+            data_transfer: DataTransferRules::default(),
             lifecycle_transitions: HashMap::new(),
         }
     }
 
     #[test]
-    fn simple_put_get_delete() {
+    fn simple_put_get_delete() -> Result<(), Box<dyn std::error::Error>> {
         let rules = test_rules();
         let mut sim = Simulator::new(rules);
 
         let log = OperationLog {
             operations: vec![
                 Operation {
-                    timestamp: "2024-01-01T00:00:00Z".parse().expect("valid timestamp"),
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
                     bucket: "test-bucket".into(),
                     key: Some("file.txt".into()),
                     kind: OperationKind::PutObject {
@@ -834,7 +1092,7 @@ mod tests {
                     },
                 },
                 Operation {
-                    timestamp: "2024-01-15T00:00:00Z".parse().expect("valid timestamp"),
+                    timestamp: "2024-01-15T00:00:00Z".parse()?,
                     bucket: "test-bucket".into(),
                     key: Some("file.txt".into()),
                     kind: OperationKind::GetObject {
@@ -843,7 +1101,7 @@ mod tests {
                     },
                 },
                 Operation {
-                    timestamp: "2024-02-01T00:00:00Z".parse().expect("valid timestamp"),
+                    timestamp: "2024-02-01T00:00:00Z".parse()?,
                     bucket: "test-bucket".into(),
                     key: Some("file.txt".into()),
                     kind: OperationKind::DeleteObject,
@@ -852,10 +1110,686 @@ mod tests {
             metadata: None,
         };
 
-        let report = sim.simulate(&log).expect("simulation should succeed");
+        let report = sim.simulate(&log)?;
 
         assert!(!report.total_cost.is_zero());
         assert_eq!(report.stats.objects_created, 1);
         assert_eq!(report.stats.objects_deleted, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn wait_operation_bills_storage() -> Result<(), Box<dyn std::error::Error>> {
+        let rules = test_rules();
+        let mut sim = Simulator::new(rules);
+
+        // Upload 1 GB, then wait 30 days
+        let log = OperationLog {
+            operations: vec![
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("large-file.bin".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 1024 * 1024 * 1024, // 1 GB
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                Operation {
+                    timestamp: "2024-01-31T00:00:00Z".parse()?,
+                    bucket: "_".into(),
+                    key: None,
+                    kind: OperationKind::Wait {
+                        reason: Some("Calculate 30 days storage".to_string()),
+                    },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        // Storage cost for 1 GB for 30 days at $0.023/GB/month = $0.023
+        // (30 days is exactly 1 month in our calculation)
+        assert!(!report.total_cost.is_zero());
+        assert_eq!(report.stats.objects_created, 1);
+        assert_eq!(report.stats.objects_deleted, 0);
+
+        // Verify storage was billed (should be approximately $0.023)
+        let storage_cost = report.breakdown.total_storage;
+        assert!(!storage_cost.is_zero());
+
+        Ok(())
+    }
+
+    #[test]
+    fn wait_operation_with_no_reason() -> Result<(), Box<dyn std::error::Error>> {
+        let rules = test_rules();
+        let mut sim = Simulator::new(rules);
+
+        let log = OperationLog {
+            operations: vec![
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("file.txt".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 1024,
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                Operation {
+                    timestamp: "2024-01-02T00:00:00Z".parse()?,
+                    bucket: "_".into(),
+                    key: None,
+                    kind: OperationKind::Wait { reason: None },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+        assert!(!report.total_cost.is_zero());
+        Ok(())
+    }
+
+    #[test]
+    fn wait_extends_time_range() -> Result<(), Box<dyn std::error::Error>> {
+        let rules = test_rules();
+        let mut sim = Simulator::new(rules);
+
+        // Upload on Jan 1, wait until Jul 1 (6 months)
+        let log = OperationLog {
+            operations: vec![
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("file.bin".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 1024 * 1024 * 1024, // 1 GB
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                Operation {
+                    timestamp: "2024-07-01T00:00:00Z".parse()?,
+                    bucket: "_".into(),
+                    key: None,
+                    kind: OperationKind::Wait {
+                        reason: Some("6 months of storage".to_string()),
+                    },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        // 6 months of storage for 1 GB at $0.023/GB/month ≈ $0.138
+        // (182 days / 30 days per month ≈ 6.07 months)
+        let storage_cost = report.breakdown.total_storage;
+        assert!(!storage_cost.is_zero());
+
+        // Verify time range was extended
+        let (start, end) = report.time_range.expect("time_range should be set");
+        assert_eq!(start.format("%Y-%m-%d").to_string(), "2024-01-01");
+        assert_eq!(end.format("%Y-%m-%d").to_string(), "2024-07-01");
+
+        Ok(())
+    }
+
+    #[test]
+    fn versioning_creates_noncurrent_versions() -> Result<(), Box<dyn std::error::Error>> {
+        let rules = test_rules();
+        let mut sim = Simulator::new(rules);
+
+        let log = OperationLog {
+            operations: vec![
+                // Enable versioning
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "versioned-bucket".into(),
+                    key: None,
+                    kind: OperationKind::SetBucketVersioning { enabled: true },
+                },
+                // Upload file v1
+                Operation {
+                    timestamp: "2024-01-01T00:01:00Z".parse()?,
+                    bucket: "versioned-bucket".into(),
+                    key: Some("file.txt".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 1024 * 1024, // 1 MB
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                // Upload file v2 (creates noncurrent version)
+                Operation {
+                    timestamp: "2024-01-02T00:00:00Z".parse()?,
+                    bucket: "versioned-bucket".into(),
+                    key: Some("file.txt".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 2 * 1024 * 1024, // 2 MB
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                // Wait to bill storage
+                Operation {
+                    timestamp: "2024-02-01T00:00:00Z".parse()?,
+                    bucket: "_".into(),
+                    key: None,
+                    kind: OperationKind::Wait { reason: None },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        // Should have storage cost for both current and noncurrent versions
+        assert!(!report.total_cost.is_zero());
+
+        // Verify noncurrent version was created
+        assert_eq!(sim.state().noncurrent_version_count(), 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn delete_object_version_with_early_deletion() -> Result<(), Box<dyn std::error::Error>> {
+        // Create rules with early deletion penalty
+        let mut rules = test_rules();
+        rules.storage_classes.get_mut("STANDARD").unwrap().min_storage_duration_days = Some(30);
+
+        let mut sim = Simulator::new(rules);
+
+        let log = OperationLog {
+            operations: vec![
+                // Enable versioning
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: None,
+                    kind: OperationKind::SetBucketVersioning { enabled: true },
+                },
+                // Upload file
+                Operation {
+                    timestamp: "2024-01-01T00:01:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("file.txt".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 1024 * 1024 * 1024, // 1 GB
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                // Update file (creates noncurrent version)
+                Operation {
+                    timestamp: "2024-01-02T00:00:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("file.txt".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 1024 * 1024 * 1024, // 1 GB
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        // Should have early deletion penalty for the overwritten version
+        assert!(!report.breakdown.early_deletion_penalties.is_zero());
+
+        Ok(())
+    }
+
+    #[test]
+    fn replicate_object_incurs_transfer_cost() -> Result<(), Box<dyn std::error::Error>> {
+        // Create rules with egress pricing
+        let mut rules = test_rules();
+        rules.data_transfer.egress_price_per_gb = TieredPrice::flat(
+            Money::from_str("0.09").ok().unwrap_or(Money::ZERO),
+        );
+
+        let mut sim = Simulator::new(rules);
+
+        let log = OperationLog {
+            operations: vec![
+                // Upload file
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "source-bucket".into(),
+                    key: Some("data.bin".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 10 * 1024 * 1024 * 1024, // 10 GB
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                // Replicate to another region
+                Operation {
+                    timestamp: "2024-01-01T00:01:00Z".parse()?,
+                    bucket: "source-bucket".into(),
+                    key: Some("data.bin".into()),
+                    kind: OperationKind::ReplicateObject {
+                        destination_region: "eu-west-1".to_string(),
+                        destination_bucket: Some("dest-bucket".to_string()),
+                        destination_key: None,
+                        storage_class: None,
+                    },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        // Should have egress cost for replication
+        assert!(!report.breakdown.data_transfer_egress.is_zero());
+
+        Ok(())
+    }
+
+    #[test]
+    fn copy_object_within_bucket() -> Result<(), Box<dyn std::error::Error>> {
+        let rules = test_rules();
+        let mut sim = Simulator::new(rules);
+
+        let log = OperationLog {
+            operations: vec![
+                // Upload source file
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("source.txt".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 1024 * 1024,
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                // Copy within same bucket
+                Operation {
+                    timestamp: "2024-01-01T00:01:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("dest.txt".into()),
+                    kind: OperationKind::CopyObject {
+                        source_key: "source.txt".to_string(),
+                        source_bucket: None,
+                        storage_class: None,
+                    },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        assert_eq!(report.stats.objects_created, 2);
+        assert!(!report.total_cost.is_zero());
+        Ok(())
+    }
+
+    #[test]
+    fn list_objects_charges_operation() -> Result<(), Box<dyn std::error::Error>> {
+        let rules = test_rules();
+        let mut sim = Simulator::new(rules);
+
+        let log = OperationLog {
+            operations: vec![Operation {
+                timestamp: "2024-01-01T00:00:00Z".parse()?,
+                bucket: "test-bucket".into(),
+                key: Some("prefix/".into()),
+                kind: OperationKind::ListObjects {
+                    objects_returned: Some(1000),
+                },
+            }],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        assert_eq!(report.stats.total_operations, 1);
+        assert!(report.breakdown.operations_by_type.contains_key("LIST"));
+        Ok(())
+    }
+
+    #[test]
+    fn head_object_charges_operation() -> Result<(), Box<dyn std::error::Error>> {
+        let rules = test_rules();
+        let mut sim = Simulator::new(rules);
+
+        let log = OperationLog {
+            operations: vec![
+                // Create object first
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("file.txt".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 1024,
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                // Head the object
+                Operation {
+                    timestamp: "2024-01-01T00:01:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("file.txt".into()),
+                    kind: OperationKind::HeadObject,
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        assert_eq!(report.stats.total_operations, 2);
+        assert!(report.breakdown.operations_by_type.contains_key("HEAD"));
+        Ok(())
+    }
+
+    #[test]
+    fn multipart_upload_complete() -> Result<(), Box<dyn std::error::Error>> {
+        let rules = test_rules();
+        let mut sim = Simulator::new(rules);
+
+        let log = OperationLog {
+            operations: vec![
+                // Create multipart upload
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("large-file.bin".into()),
+                    kind: OperationKind::CreateMultipartUpload {
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                // Upload part 1
+                Operation {
+                    timestamp: "2024-01-01T00:01:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("large-file.bin".into()),
+                    kind: OperationKind::UploadPart {
+                        upload_id: "test-bucket:large-file.bin".to_string(),
+                        part_number: 1,
+                        size_bytes: 5 * 1024 * 1024, // 5 MB
+                    },
+                },
+                // Upload part 2
+                Operation {
+                    timestamp: "2024-01-01T00:02:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("large-file.bin".into()),
+                    kind: OperationKind::UploadPart {
+                        upload_id: "test-bucket:large-file.bin".to_string(),
+                        part_number: 2,
+                        size_bytes: 5 * 1024 * 1024, // 5 MB
+                    },
+                },
+                // Complete upload
+                Operation {
+                    timestamp: "2024-01-01T00:03:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("large-file.bin".into()),
+                    kind: OperationKind::CompleteMultipartUpload {
+                        upload_id: "test-bucket:large-file.bin".to_string(),
+                        total_size_bytes: Some(10 * 1024 * 1024),
+                    },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        assert_eq!(report.stats.objects_created, 1);
+        assert_eq!(report.stats.bytes_uploaded, Bytes::from_mb(10));
+        Ok(())
+    }
+
+    #[test]
+    fn multipart_upload_abort() -> Result<(), Box<dyn std::error::Error>> {
+        let rules = test_rules();
+        let mut sim = Simulator::new(rules);
+
+        let log = OperationLog {
+            operations: vec![
+                // Create multipart upload
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("large-file.bin".into()),
+                    kind: OperationKind::CreateMultipartUpload {
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                // Upload one part
+                Operation {
+                    timestamp: "2024-01-01T00:01:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("large-file.bin".into()),
+                    kind: OperationKind::UploadPart {
+                        upload_id: "test-bucket:large-file.bin".to_string(),
+                        part_number: 1,
+                        size_bytes: 5 * 1024 * 1024,
+                    },
+                },
+                // Abort upload
+                Operation {
+                    timestamp: "2024-01-01T00:02:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("large-file.bin".into()),
+                    kind: OperationKind::AbortMultipartUpload {
+                        upload_id: "test-bucket:large-file.bin".to_string(),
+                    },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        // No objects should be created since we aborted
+        assert_eq!(report.stats.objects_created, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn lifecycle_transition_changes_class() -> Result<(), Box<dyn std::error::Error>> {
+        let mut rules = test_rules();
+        // Add IA storage class
+        rules.storage_classes.insert(
+            "STANDARD_IA".to_string(),
+            StorageClassRules {
+                storage_price_per_gb_month: TieredPrice::flat(
+                    Money::from_str("0.0125").ok().unwrap_or(Money::ZERO),
+                ),
+                min_billable_size_bytes: Some(128 * 1024),
+                min_storage_duration_days: Some(30),
+                metadata_overhead_bytes: None,
+                retrieval_price_per_gb: Some(Money::from_str("0.01").ok().unwrap_or(Money::ZERO)),
+                retrieval_tiers: vec![],
+                intelligent_tiering: false,
+                monitoring_price_per_1000_objects: None,
+            },
+        );
+
+        let mut sim = Simulator::new(rules);
+
+        let log = OperationLog {
+            operations: vec![
+                // Upload file
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("file.txt".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 1024 * 1024,
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                // Transition to IA
+                Operation {
+                    timestamp: "2024-01-31T00:00:00Z".parse()?,
+                    bucket: "test-bucket".into(),
+                    key: Some("file.txt".into()),
+                    kind: OperationKind::LifecycleTransition {
+                        new_storage_class: StorageClass::new("STANDARD_IA"),
+                    },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        assert_eq!(report.stats.total_operations, 2);
+        // Verify the object was transitioned
+        let obj = sim.state().get_object("test-bucket", "file.txt");
+        assert!(obj.is_some());
+        assert_eq!(obj.unwrap().storage_class, StorageClass::new("STANDARD_IA"));
+        Ok(())
+    }
+
+    #[test]
+    fn restore_object_charges_retrieval() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::pricing::RetrievalTier;
+
+        let mut rules = test_rules();
+        // Add Glacier storage class with retrieval pricing
+        rules.storage_classes.insert(
+            "GLACIER".to_string(),
+            StorageClassRules {
+                storage_price_per_gb_month: TieredPrice::flat(
+                    Money::from_str("0.004").ok().unwrap_or(Money::ZERO),
+                ),
+                min_billable_size_bytes: None,
+                min_storage_duration_days: Some(90),
+                metadata_overhead_bytes: None,
+                retrieval_price_per_gb: Some(Money::from_str("0.01").ok().unwrap_or(Money::ZERO)),
+                retrieval_tiers: vec![
+                    RetrievalTier {
+                        name: "standard".to_string(),
+                        price_per_gb: Money::from_str("0.01").ok().unwrap_or(Money::ZERO),
+                        price_per_1000_requests: None,
+                    },
+                    RetrievalTier {
+                        name: "bulk".to_string(),
+                        price_per_gb: Money::from_str("0.0025").ok().unwrap_or(Money::ZERO),
+                        price_per_1000_requests: None,
+                    },
+                ],
+                intelligent_tiering: false,
+                monitoring_price_per_1000_objects: None,
+            },
+        );
+
+        let mut sim = Simulator::new(rules);
+
+        let log = OperationLog {
+            operations: vec![
+                // Upload file directly to Glacier
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "archive-bucket".into(),
+                    key: Some("archive.tar".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 10 * 1024 * 1024 * 1024, // 10 GB
+                        storage_class: StorageClass::new("GLACIER"),
+                    },
+                },
+                // Restore the object
+                Operation {
+                    timestamp: "2024-04-01T00:00:00Z".parse()?,
+                    bucket: "archive-bucket".into(),
+                    key: Some("archive.tar".into()),
+                    kind: OperationKind::RestoreObject {
+                        days: 7,
+                        tier: Some(crate::operations::RetrievalSpeed::Bulk),
+                    },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        // Should have retrieval cost
+        assert!(!report.breakdown.retrieval.is_zero());
+        Ok(())
+    }
+
+    #[test]
+    fn select_object_content_charges_operation() -> Result<(), Box<dyn std::error::Error>> {
+        let rules = test_rules();
+        let mut sim = Simulator::new(rules);
+
+        let log = OperationLog {
+            operations: vec![
+                // Upload a CSV file
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "data-bucket".into(),
+                    key: Some("data.csv".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 100 * 1024 * 1024, // 100 MB
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                // Run a select query
+                Operation {
+                    timestamp: "2024-01-01T00:01:00Z".parse()?,
+                    bucket: "data-bucket".into(),
+                    key: Some("data.csv".into()),
+                    kind: OperationKind::SelectObjectContent {
+                        bytes_scanned: Some(100 * 1024 * 1024),
+                        bytes_returned: Some(1024 * 1024), // 1 MB returned
+                    },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        assert_eq!(report.stats.total_operations, 2);
+        assert_eq!(report.stats.bytes_downloaded, Bytes::from_mb(1));
+        Ok(())
+    }
+
+    #[test]
+    fn copy_object_across_buckets() -> Result<(), Box<dyn std::error::Error>> {
+        let rules = test_rules();
+        let mut sim = Simulator::new(rules);
+
+        let log = OperationLog {
+            operations: vec![
+                // Upload source file
+                Operation {
+                    timestamp: "2024-01-01T00:00:00Z".parse()?,
+                    bucket: "source-bucket".into(),
+                    key: Some("file.txt".into()),
+                    kind: OperationKind::PutObject {
+                        size_bytes: 1024 * 1024,
+                        storage_class: StorageClass::new("STANDARD"),
+                    },
+                },
+                // Copy across buckets
+                Operation {
+                    timestamp: "2024-01-01T00:01:00Z".parse()?,
+                    bucket: "dest-bucket".into(),
+                    key: Some("copied-file.txt".into()),
+                    kind: OperationKind::CopyObject {
+                        source_key: "file.txt".to_string(),
+                        source_bucket: Some("source-bucket".to_string()),
+                        storage_class: None,
+                    },
+                },
+            ],
+            metadata: None,
+        };
+
+        let report = sim.simulate(&log)?;
+
+        assert_eq!(report.stats.objects_created, 2);
+        Ok(())
     }
 }
